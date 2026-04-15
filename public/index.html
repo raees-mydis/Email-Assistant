@@ -256,6 +256,34 @@ What would you like to do?</div>
 </div>
 
 <script>
+
+// PIN lock
+const CORRECT_PIN = 'Ark4d786!';
+
+function checkPin() {
+  const input = document.getElementById('pin-input');
+  if (!input) return;
+  if (input.value === CORRECT_PIN) {
+    document.getElementById('pin-screen').classList.add('hidden');
+    sessionStorage.setItem('pen_auth', '1');
+  } else {
+    document.getElementById('pin-error').textContent = 'Incorrect — try again';
+    input.value = '';
+    input.focus();
+  }
+}
+
+function initPin() {
+  if (sessionStorage.getItem('pen_auth') === '1') {
+    document.getElementById('pin-screen').classList.add('hidden');
+  } else {
+    setTimeout(function() {
+      var inp = document.getElementById('pin-input');
+      if (inp) inp.focus();
+    }, 300);
+  }
+}
+
 const BACKEND = 'https://email-assistant-production-8a69.up.railway.app';
 
 let cfg = { autoread: true, wake: false, speed: 0.95, backendUrl: BACKEND, muted: false, voiceAccent: 'british' };

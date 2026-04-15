@@ -73,7 +73,7 @@ function startScheduler() {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-const PORT = config.app.port;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('\n✅  WhatsApp Email Assistant started');
   console.log(`    Webhook:  http://localhost:${PORT}/webhook/whatsapp`);

@@ -108,6 +108,15 @@ async function processIntent(parsed) {
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
 
+    case 'tasks_today':
+      return handleTasksToday();
+
+    case 'postpone_task':
+      return handlePostponeTask(parsed.taskId, parsed.content);
+
+    case 'postpone_all_tasks':
+      return handlePostponeAllTasks(parsed.content);
+
     case 'help':
       const helpMsg = 'Here is what you can ask me 👇\n\n' +
         '"update" - get digest now\n' +
@@ -451,6 +460,59 @@ function findEmailByKeyword(session, keyword) {
     e.subject.toLowerCase().includes(kw) ||
     e.preview.toLowerCase().includes(kw)
   ) || null;
+}
+
+
+async function handleTasksToday() {
+  await waSend('Checking your outstanding tasks... 📋');
+  try {
+    const tasks = await todoist.getTodayTasks();
+    if (!tasks.length) {
+      return waSend('No outstanding tasks due today! 🎉');
+    }
+    store.savePendingTasks(tasks);
+    const lines = tasks.map((t, i) =>
+      '[T' + (i+1) + '] ' + t.content + (t.due ? ' - due ' + t.due.date : '')
+    ).join('\n');
+    const msg = '📋 Outstanding tasks (' + tasks.length + '):\n\n' + lines + '\n\nSay "postpone task T2 to Friday", "postpone all to tomorrow", or "postpone all to [date]"';
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  } catch (err) {
+    return waSend('Had trouble fetching tasks 😕 - ' + err.message);
+  }
+}
+
+async function handlePostponeTask(taskIndex, dueString) {
+  const tasks = store.getPendingTasks();
+  if (!tasks || !tasks.length) {
+    const fetched = await todoist.getTodayTasks();
+    if (!fetched.length) return waSend('No outstanding tasks found 📋');
+    store.savePendingTasks(fetched);
+    if (taskIndex === null || taskIndex === undefined) {
+      return waSend('Which task? Say the number from the task list 👍');
+    }
+  }
+  const allTasks = store.getPendingTasks() || [];
+  const task = allTasks[taskIndex];
+  if (!task) return waSend('Could not find that task number 🔍 Say "tasks today" to see the list.');
+  const newDate = dueString || 'tomorrow';
+  await todoist.updateTaskDue(task.id, newDate);
+  const msg = 'Done! ✅ "' + task.content + '" postponed to ' + newDate;
+  store.saveConversationTurn('penelope', msg);
+  return waSend(msg);
+}
+
+async function handlePostponeAllTasks(dueString) {
+  await waSend('Fetching your outstanding tasks... 📋');
+  const tasks = await todoist.getTodayTasks();
+  if (!tasks.length) return waSend('No outstanding tasks to postpone 🎉');
+  const newDate = dueString || 'tomorrow';
+  await waSend('Postponing ' + tasks.length + ' task' + (tasks.length > 1 ? 's' : '') + ' to ' + newDate + '...');
+  const results = await todoist.postponeAllTasks(tasks, newDate);
+  const msg = 'Done! ✅ ' + results.length + ' task' + (results.length > 1 ? 's' : '') + ' moved to ' + newDate + ':\n\n' +
+    results.map(r => '• ' + r.content).join('\n');
+  store.saveConversationTurn('penelope', msg);
+  return waSend(msg);
 }
 
 module.exports = { handleInbound };

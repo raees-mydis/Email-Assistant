@@ -75,3 +75,16 @@ module.exports = {
   saveChaseItem, removeChaseItem, getChaseItems,
   saveConversationTurn, getConversation,
 };
+
+function savePendingTasks(tasks) {
+  const s = load();
+  s.pendingTasks = tasks;
+  save(s);
+}
+
+function getPendingTasks() {
+  return load().pendingTasks || null;
+}
+
+const _orig = module.exports;
+module.exports = { ..._orig, savePendingTasks, getPendingTasks };

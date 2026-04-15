@@ -43,6 +43,21 @@ async function graphPatch(path, body) {
   });
 }
 
+function mapMessage(m) {
+  return {
+    id: m.id,
+    subject: m.subject || '(no subject)',
+    from: m.from && m.from.emailAddress ? m.from.emailAddress.address : 'unknown',
+    fromName: m.from && m.from.emailAddress ? m.from.emailAddress.name : '',
+    preview: m.bodyPreview || '',
+    receivedAt: m.receivedDateTime,
+    importance: m.importance || 'normal',
+    hasAttachments: m.hasAttachments || false,
+    conversationId: m.conversationId || '',
+    isRead: m.isRead || false,
+  };
+}
+
 async function getUnreadEmails(max) {
   const email = config.azure.userEmail;
   const data = await graphGet('/users/' + email + '/messages', {
@@ -66,22 +81,6 @@ async function getRecentEmails(minutesBack) {
   return (data.value || []).map(mapMessage);
 }
 
-function mapMessage(m) {
-  return {
-    id: m.id,
-    subject: m.subject || '(no subject)',
-    from: m.from && m.from.emailAddress ? m.from.emailAddress.address : 'unknown',
-    fromName: m.from && m.from.emailAddress ? m.from.emailAddress.name : '',
-    preview: m.bodyPreview || '',
-    receivedAt: m.receivedDateTime,
-    importance: m.importance || 'normal',
-    hasAttachments: m.hasAttachments || false,
-    conversationId: m.conversationId || '',
-    isRead: m.isRead || false,
-  };
-}
-
-// Check if a team member has replied in this conversation
 async function getThreadTeamReplies(conversationId) {
   if (!conversationId) return null;
   const email = config.azure.userEmail;
@@ -117,10 +116,8 @@ async function getAttachments(messageId) {
 
 async function markAsRead(messageId) {
   const email = config.azure.userEmail;
-  try {
-    await graphPatch('/users/' + email + '/messages/' + messageId, { isRead: true });
-    return true;
-  } catch { return false; }
+  try { await graphPatch('/users/' + email + '/messages/' + messageId, { isRead: true }); return true; }
+  catch { return false; }
 }
 
 async function markMultipleAsRead(messageIds) {
@@ -163,4 +160,57 @@ async function getSentEmails(searchTerm) {
   }));
 }
 
-module.exports = { getUnreadEmails, getRecentEmails, getThreadTeamReplies, getAttachments, markAsRead, markMultipleAsRead, replyToEmail, sendEmail, getSentEmails, TEAM_EMAILS };
+// ─── Calendar ────────────────────────────────────────────────────────────────
+
+function getDayRange(offsetDays) {
+  const tz = 'Europe/London';
+  const now = new Date();
+  const target = new Date(now);
+  target.setDate(target.getDate() + offsetDays);
+
+  const start = new Date(target);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(target);
+  end.setHours(23, 59, 59, 999);
+
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+async function getCalendarEvents(offsetDays) {
+  const email = config.azure.userEmail;
+  const { start, end } = getDayRange(offsetDays);
+
+  try {
+    const data = await graphGet('/users/' + email + '/calendarView', {
+      startDateTime: start,
+      endDateTime: end,
+      '$select': 'subject,start,end,location,attendees,bodyPreview,isAllDay,isCancelled,showAs,organizer',
+      '$orderby': 'start/dateTime',
+      '$top': 20,
+    });
+
+    return (data.value || [])
+      .filter(e => !e.isCancelled && e.showAs !== 'free')
+      .map(e => ({
+        subject: e.subject || '(no title)',
+        startTime: e.start ? e.start.dateTime : null,
+        endTime: e.end ? e.end.dateTime : null,
+        isAllDay: e.isAllDay || false,
+        location: e.location && e.location.displayName ? e.location.displayName : null,
+        organizer: e.organizer && e.organizer.emailAddress ? e.organizer.emailAddress.name || e.organizer.emailAddress.address : null,
+        attendees: (e.attendees || []).map(a => a.emailAddress ? (a.emailAddress.name || a.emailAddress.address) : '').filter(Boolean),
+        preview: e.bodyPreview || '',
+      }));
+  } catch (err) {
+    console.error('[graph] calendar error:', err.message);
+    return [];
+  }
+}
+
+module.exports = {
+  getUnreadEmails, getRecentEmails, getThreadTeamReplies,
+  getAttachments, markAsRead, markMultipleAsRead,
+  replyToEmail, sendEmail, getSentEmails,
+  getCalendarEvents,
+  TEAM_EMAILS,
+};

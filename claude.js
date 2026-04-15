@@ -275,3 +275,47 @@ module.exports = {
   parseIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
   PRIORITY_HIGH, TEAM,
 };
+
+async function summariseCalendarDay(events, dayLabel) {
+  if (!events.length) return '📅 *' + dayLabel + ':* Calendar is clear! 🎉';
+
+  const block = events.map(e => {
+    let time = '';
+    if (e.isAllDay) {
+      time = 'All day';
+    } else if (e.startTime) {
+      const s = new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+      const en = new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+      time = s + ' – ' + en;
+    }
+    const loc = e.location ? ' @ ' + e.location : '';
+    const attendeeList = e.attendees.length ? 'With: ' + e.attendees.slice(0,4).join(', ') : '';
+    return time + ' — ' + e.subject + loc + (attendeeList ? '\n  ' + attendeeList : '');
+  }).join('\n\n');
+
+  return ask(
+    MASTER_SYSTEM,
+    `Summarise these calendar events for Raees's ${dayLabel}. Be concise and voice-friendly.
+
+For each event:
+- State the time and what it is
+- If it involves prep (meetings, calls, presentations) flag it with ⚠️ Prep needed
+- If it's with a key contact (client, investor, etc) flag with ⭐
+- Keep it short — this is read aloud in the car
+
+Format:
+📅 *${dayLabel}*
+[time] Event name
+[flag if needed]
+
+End with a count: "X events today/tomorrow"
+
+EVENTS:
+${block}`,
+    600
+  );
+}
+
+// Export the new function alongside existing ones
+const _originalExports = module.exports;
+module.exports = { ..._originalExports, summariseCalendarDay };

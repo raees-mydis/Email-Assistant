@@ -64,6 +64,7 @@ async function runDigest() {
     // Save combined session (MYDIS first, then IWS)
     const allEmails = [...mydisInbound, ...iwsInbound];
     store.saveSession(allEmails);
+    const allInbound = allEmails; // alias for day summary use
 
     const stakeholders = store.getStakeholderAssignments();
 

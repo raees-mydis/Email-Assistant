@@ -81,17 +81,13 @@ async function getTodayTasks() {
       headers: { Authorization: 'Bearer ' + config.todoist.token },
       params: { project_id: config.todoist.projectId }
     });
-    // API v1 returns { results: [...] }, API v2 returned array directly
-    const all = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
-    console.log('[todoist] fetched', all.length, 'tasks');
+    const all = res.data || [];
     const today = new Date().toISOString().split('T')[0];
-    const due = all.filter(t => {
+    return all.filter(t => {
       if (!t.due) return false;
       const dueDate = t.due.date;
       return dueDate <= today;
     });
-    console.log('[todoist] tasks due today:', due.length);
-    return due;
   } catch (err) {
     console.error('[todoist] getTodayTasks error:', err.message);
     return [];
@@ -120,4 +116,19 @@ async function postponeAllTasks(tasks, dueString) {
   return results;
 }
 
-module.exports = { createTask, getTodayTasks, updateTaskDue, postponeAllTasks };
+async function getTasksForDate(dateStr) {
+  // dateStr format: YYYY-MM-DD
+  try {
+    const res = await axios.get(BASE + '/tasks', {
+      headers: { Authorization: 'Bearer ' + config.todoist.token },
+      params: { project_id: config.todoist.projectId }
+    });
+    const all = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
+    return all.filter(t => t.due && t.due.date === dateStr);
+  } catch (err) {
+    console.error('[todoist] getTasksForDate error:', err.message);
+    return [];
+  }
+}
+
+module.exports = { createTask, getTodayTasks, getTasksForDate, updateTaskDue, postponeAllTasks };

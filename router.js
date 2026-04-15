@@ -108,6 +108,12 @@ async function processIntent(parsed) {
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
 
+    case 'day_summary_today':
+      return handleDaySummary(0);
+
+    case 'day_summary_tomorrow':
+      return handleDaySummary(1);
+
     case 'tasks_today':
       return handleTasksToday();
 
@@ -515,6 +521,33 @@ async function handlePostponeAllTasks(dueString) {
     results.map(r => '• ' + r.content).join('\n');
   store.saveConversationTurn('penelope', msg);
   return waSend(msg);
+}
+
+async function handleDaySummary(offsetDays) {
+  const label = offsetDays === 0 ? 'Today' :
+    'Tomorrow - ' + new Date(Date.now() + 86400000).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long' });
+
+  await waSend('Pulling together your ' + (offsetDays === 0 ? 'day' : 'tomorrow') + '... ⏳');
+
+  try {
+    const dateStr = new Date(Date.now() + offsetDays * 86400000).toISOString().split('T')[0];
+
+    const [emails, calEvents, tasks] = await Promise.all([
+      graph.getUnreadEmails(30),
+      graph.getCombinedCalendarEvents(offsetDays),
+      offsetDays === 0 ? todoist.getTodayTasks() : todoist.getTasksForDate(dateStr),
+    ]);
+
+    const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
+    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
+
+    const summary = await claude.generateDaySummary(inbound, calEvents, tasks, label, dateStr);
+    store.saveConversationTurn('penelope', summary);
+    return waSend(summary);
+  } catch (err) {
+    console.error('[daySummary] error:', err.message);
+    return waSend('Had trouble pulling that together 😕 - ' + err.message);
+  }
 }
 
 module.exports = { handleInbound };

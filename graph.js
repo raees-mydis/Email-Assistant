@@ -35,7 +35,7 @@ async function getUnreadEmails(max) {
   const email = config.azure.userEmail;
   const data = await graphGet('/users/' + email + '/messages', {
     '$filter': 'isRead eq false',
-    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance',
+    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments',
     '$orderby': 'receivedDateTime DESC',
     '$top': max || 25,
   });
@@ -47,7 +47,24 @@ async function getUnreadEmails(max) {
     preview: m.bodyPreview || '',
     receivedAt: m.receivedDateTime,
     importance: m.importance || 'normal',
+    hasAttachments: m.hasAttachments || false,
   }));
+}
+
+async function getAttachments(messageId) {
+  const email = config.azure.userEmail;
+  try {
+    const data = await graphGet('/users/' + email + '/messages/' + messageId + '/attachments');
+    return (data.value || [])
+      .filter(a => !a.isInline)
+      .map(a => ({
+        id: a.id,
+        name: a.name || 'attachment',
+        contentType: a.contentType || '',
+        size: a.size || 0,
+        contentBytes: a.contentBytes || null,
+      }));
+  } catch { return []; }
 }
 
 async function replyToEmail(messageId, replyText) {
@@ -67,8 +84,6 @@ async function sendEmail(opts) {
   });
 }
 
-
-
 async function getSentEmails(searchTerm) {
   const email = config.azure.userEmail;
   const data = await graphGet('/users/' + email + '/mailFolders/SentItems/messages', {
@@ -85,4 +100,4 @@ async function getSentEmails(searchTerm) {
   }));
 }
 
-module.exports = { getUnreadEmails, replyToEmail, sendEmail, getSentEmails };
+module.exports = { getUnreadEmails, getAttachments, replyToEmail, sendEmail, getSentEmails };

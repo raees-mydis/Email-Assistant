@@ -54,6 +54,7 @@ async function processIntent(parsed) {
   switch (parsed.intent) {
     case 'update':
       await waSend('Sure Raees, give me a sec... 📬');
+  await new Promise(r => setTimeout(r, 800));
       store.saveConversationTurn('penelope', 'Fetching emails...');
       return require('./digest').runDigest();
 
@@ -151,7 +152,6 @@ async function processIntent(parsed) {
 
 async function handleCalendar(offsetDays) {
   const label = offsetDays === 0 ? 'today' : 'tomorrow';
-  await waSend('Sure Raees, checking your calendar... 📅');
   try {
     const events = await graph.getCalendarEvents(offsetDays);
     if (!events || !events.length) {
@@ -184,6 +184,7 @@ async function handleCalendar(offsetDays) {
 
 async function handleMorningBrief() {
   await waSend('Good morning Raees! Give me a sec... ☀️');
+  await new Promise(r => setTimeout(r, 800));
   try {
     const [emails, tasks] = await Promise.all([
       graph.getUnreadEmails(30),
@@ -205,6 +206,7 @@ async function handleMorningBrief() {
 async function handlePeriodUpdate(minutes) {
   const label = minutes >= 1440 ? 'today' : minutes >= 60 ? 'the last ' + Math.round(minutes/60) + ' hour' + (minutes > 60 ? 's' : '') : 'the last ' + minutes + ' mins';
   await waSend('Sure Raees, pulling that for you... 🔍');
+  await new Promise(r => setTimeout(r, 800));
   try {
     const emails = await graph.getRecentEmails(minutes);
     const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
@@ -276,7 +278,6 @@ async function handleTask(emailIndex, personName, sectionHint) {
   if (!session) return waSend('No emails loaded - say "update" first 📬');
   const email = findEmail(session, emailIndex, personName);
   if (!email) return waSend('Could not find that email 🔍 Try the number from the digest.');
-  await waSend('Sure Raees, adding that now... 📋');
   try {
     const taskData = await claude.extractTask(email);
     taskData.section = sectionHint || 'operations';
@@ -300,7 +301,6 @@ async function handleDelegate(emailIndex, delegateTo, personName) {
   if (!delegateTo) return waSend('Who should I delegate this to? 👤');
   const delegateEmail = DELEGATES[delegateTo.toLowerCase()];
   if (!delegateEmail) return waSend('I do not have ' + delegateTo + '\'s email - let me know their address and I will add it! 👤');
-  await waSend('Sure Raees, drafting that now... ✍️');
   const brief = await claude.draftDelegation(email, delegateTo);
   await graph.sendEmail({ to: delegateEmail, subject: 'For your action: ' + email.subject, body: brief });
   store.setEmailAction(email.id, 'delegated', 'to ' + delegateTo);
@@ -399,7 +399,6 @@ async function handleMoreDetail(emailIndex, personName, itemReference) {
     ? findEmail(session, emailIndex, personName)
     : itemReference ? findEmailByKeyword(session, itemReference) : null;
   if (!email) return waSend('Which email do you want more detail on? 🔍');
-  await waSend('Sure Raees, give me a sec... 🔍');
   try {
     const date = new Date(email.receivedAt).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
     let detail = email.subject + '\nFrom: ' + (email.fromName || email.from) + ' <' + email.from + '>\n' + date + '\n\n' + email.preview;
@@ -421,7 +420,6 @@ async function handleAttachmentQuery(emailIndex, personName, question, itemRefer
   const email = findEmail(session, emailIndex, personName) || (itemReference ? findEmailByKeyword(session, itemReference) : null);
   if (!email) return waSend('Which email\'s attachment are you asking about? 🔍');
   if (!email.hasAttachments) return waSend('That email does not have any attachments 📎');
-  await waSend('Sure Raees, scanning that now... 🔍');
   try {
     const attachments = await graph.getAttachments(email.id);
     const docAtts = attachments.filter(a => a.contentBytes && (a.contentType.includes('pdf') || a.contentType.includes('word') || a.contentType.includes('document')));
@@ -472,7 +470,6 @@ function findEmailByKeyword(session, keyword) {
 
 
 async function handleTasksToday() {
-  await waSend('Sure Raees, checking your tasks... 📋');
   try {
     const tasks = await todoist.getTodayTasks();
     if (!tasks.length) {
@@ -512,6 +509,7 @@ async function handlePostponeTask(taskIndex, dueString) {
 
 async function handlePostponeAllTasks(dueString) {
   await waSend('Sure Raees, give me a sec... 📋');
+  await new Promise(r => setTimeout(r, 800));
   const tasks = await todoist.getTodayTasks();
   if (!tasks.length) return waSend('No outstanding tasks to postpone 🎉');
   const newDate = dueString || 'tomorrow';
@@ -528,6 +526,7 @@ async function handleDaySummary(offsetDays) {
     'Tomorrow - ' + new Date(Date.now() + 86400000).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long' });
 
   await waSend('Sure Raees, pulling together your ' + (offsetDays === 0 ? 'day' : 'tomorrow') + '... ⏳');
+  await new Promise(r => setTimeout(r, 800));
 
   try {
     const dateStr = new Date(Date.now() + offsetDays * 86400000).toISOString().split('T')[0];

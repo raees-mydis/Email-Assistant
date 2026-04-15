@@ -59,7 +59,7 @@ function isSecuritySuspect(email) {
 }
 
 async function ask(system, content, maxTokens) {
-  const msg = await client.messages.create({ model: 'claude-sonnet-4-5', max_tokens: maxTokens || 800, system, messages: [{ role: 'user', content }] });
+  const msg = await client.messages.create({ model: 'claude-sonnet-4-5', max_tokens: parseInt(maxTokens || 800, 10), system, messages: [{ role: 'user', content }] });
   return msg.content[0].text.trim();
 }
 
@@ -100,7 +100,7 @@ DECISION SUPPORT: End each email item with a recommended action (Reply / Delegat
 
 DRIVING MODE DEFAULT: Always give short summary first. End with "Want me to action any of these?" If user asks for more detail, expand only that item.`;
 
-async function summariseEmails(emails, stakeholders, accountLabel) {
+async function summariseEmails(emails, stakeholders) {
   if (!emails.length) return 'All clear — nothing needs your attention right now! 🎉';
 
   const prioritised = emails
@@ -132,9 +132,7 @@ async function summariseEmails(emails, stakeholders, accountLabel) {
     ? '\n\nSTAKEHOLDER ASSIGNMENTS:\n' + Object.entries(stakeholders).map(([k,v]) => k + ' -> ' + v).join('\n')
     : '';
 
-  return ask(
-    MASTER_SYSTEM + stakeholderContext,
-    `Process these emails for Raees. 
+  const formatPrompt = `Process these emails for Raees${accountLabel ? ' (' + accountLabel + ' inbox)' : ''}.
 
 RULES:
 - Show HIGH PRIORITY emails first, always
@@ -147,7 +145,7 @@ RULES:
 
 Format each email like this (keep it tight):
 [N] 👤 Name | Subject
-📅 date and time  
+📅 date and time
 ➡️ What needs doing — one sentence
 📎 Attachment: key details if present
 🔴 URGENT / 🟡 SOON / 🟢 LOW
@@ -155,10 +153,12 @@ Format each email like this (keep it tight):
 
 End with: "Anything you'd like to action? 👆"
 
-If nothing action-worthy after filtering: "All clear — nothing needs your attention! 🎉"`,
-    prioritised.map((e,i) => '[' + (i+1) + '] ' + (e.fromName || e.from) + ' | ' + e.subject).join('\n') + '\n\nFULL DETAILS:\n\n' + block,
-    1500
-  );
+If nothing action-worthy after filtering: "All clear — nothing needs your attention! 🎉"
+
+EMAILS:
+` + prioritised.map((e,i) => '[' + (i+1) + '] ' + (e.fromName || e.from) + ' | ' + e.subject).join('\n') + '\n\nFULL DETAILS:\n\n' + block;
+
+  return ask(MASTER_SYSTEM + stakeholderContext, formatPrompt, 1500);
 }
 
 async function summariseWithContext(emails, minutes, actions, stakeholders) {

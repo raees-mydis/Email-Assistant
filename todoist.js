@@ -1,7 +1,7 @@
 const axios  = require('axios');
 const config = require('./config');
 
-const BASE           = 'https://api.todoist.com/rest/v2';
+const BASE           = 'https://api.todoist.com/api/v1';
 const PRIORITY_LEVEL = 3;
 
 let _sectionId = null;

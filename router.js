@@ -4,6 +4,20 @@ const whatsapp = require('./whatsapp');
 const todoist  = require('./todoist');
 const store    = require('./store');
 
+// Strip markdown formatting before sending to WhatsApp
+function cleanMd(text) {
+  return (text || '')
+    .replace(/#{1,3}\s/g, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`(.*?)`/g, '$1');
+}
+
+// Wrap whatsapp.send to always strip markdown
+const _origSend = whatsapp.send.bind(whatsapp);
+whatsapp.send = (text) => _origSend(cleanMd(text));
+
 const DELEGATES = {
   'hamid':   'hamid@mydis.com',
   'falak':   'falak@mydis.com',
@@ -31,18 +45,9 @@ async function handleInbound(text) {
 
   const session = store.getSession();
   const conversation = store.getConversation();
+  const parsed = await claude.parseIntent(text, session, conversation);
+  console.log('[router] intent:', JSON.stringify(parsed));
 
-  // Parse potentially multiple intents
-  const intents = await claude.parseMultiIntent(text, session, conversation);
-  console.log('[router] intents:', JSON.stringify(intents));
-
-  // Process each intent sequentially
-  for (const parsed of intents) {
-    await processIntent(parsed);
-  }
-}
-
-async function processIntent(parsed) {
   switch (parsed.intent) {
     case 'update':
       await whatsapp.send('On it! 📬');
@@ -54,6 +59,12 @@ async function processIntent(parsed) {
 
     case 'period_update':
       return handlePeriodUpdate(parsed.minutes || 60);
+
+    case 'calendar_today':
+      return handleCalendar(0);
+
+    case 'calendar_tomorrow':
+      return handleCalendar(1);
 
     case 'reply':
       return handleReply(parsed.emailIndex, parsed.content, parsed.personName, parsed.useExact);
@@ -215,17 +226,12 @@ async function handleTask(emailIndex, personName) {
   const email = findEmail(session, emailIndex, personName);
   if (!email) return whatsapp.send('Couldn\'t find that email 🔍 Try the number from the digest.');
   await whatsapp.send('Adding to Todoist... 📋');
-  try {
-    const taskData = await claude.extractTask(email);
-    const task = await todoist.createTask(taskData);
-    store.setEmailAction(email.id, 'tasked', task.content);
-    const msg = 'Done! ✅ Added to Operations (P2):\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string);
-    store.saveConversationTurn('aria', msg);
-    return whatsapp.send(msg);
-  } catch (err) {
-    console.error('[task] todoist error:', err.response ? JSON.stringify(err.response.data) : err.message);
-    return whatsapp.send('Hmm, had trouble adding that to Todoist 😕\n' + (err.response ? JSON.stringify(err.response.data) : err.message));
-  }
+  const taskData = await claude.extractTask(email);
+  const task = await todoist.createTask(taskData);
+  store.setEmailAction(email.id, 'tasked', task.content);
+  const msg = 'Done! ✅ Added to Operations (P2):\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string);
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleDelegate(emailIndex, delegateTo, personName) {
@@ -418,6 +424,47 @@ function findEmailByKeyword(session, keyword) {
     e.subject.toLowerCase().includes(kw) ||
     e.preview.toLowerCase().includes(kw)
   ) || null;
+}
+
+async function handleCalendar(offsetDays) {
+  const label = offsetDays === 0 ? 'today' : 'tomorrow';
+  await whatsapp.send('Let me check your calendar for ' + label + '... 📅');
+  try {
+    const events = await graph.getCalendarEvents(offsetDays);
+    if (!events.length) {
+      return whatsapp.send('Your calendar is clear for ' + label + '! 🎉');
+    }
+    const lines = events.map(e => {
+      let time = '';
+      if (e.isAllDay) {
+        time = 'All day';
+      } else if (e.startTime) {
+        const s = new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        const en = new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        time = s + ' – ' + en;
+      }
+      const loc = e.location ? ' 📍 ' + e.location : '';
+      const attendees = e.attendees && e.attendees.length > 1
+        ? '
+   👥 ' + e.attendees.slice(0, 4).join(', ')
+        : '';
+      return '🕐 ' + time + ' — ' + e.subject + loc + attendees;
+    }).join('
+
+');
+
+    const dayName = offsetDays === 0
+      ? 'Today'
+      : 'Tomorrow (' + new Date(Date.now() + 86400000).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long' }) + ')';
+
+    const msg = '📅 ' + dayName + ' — ' + events.length + ' event' + (events.length > 1 ? 's' : '') + '
+
+' + lines;
+    store.saveConversationTurn('penelope', msg);
+    return whatsapp.send(msg);
+  } catch (err) {
+    return whatsapp.send('Had trouble fetching your calendar 😕 — ' + err.message);
+  }
 }
 
 module.exports = { handleInbound };

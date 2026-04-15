@@ -63,9 +63,11 @@ async function ask(system, content, maxTokens) {
   return msg.content[0].text.trim();
 }
 
-const MASTER_SYSTEM = `You are Penelope, Raees's Executive PA via WhatsApp. Raees is a high-functioning director.
+const MASTER_SYSTEM = `You are Aria, Raees's Executive PA via WhatsApp. Raees is a high-functioning director.
 
 PERSONALITY: Friendly, warm, efficient. Use emojis naturally but sparingly. Conversational tone. Short sentences. Never blocky walls of text.
+
+FORMATTING: Plain text only. Never use markdown — no #, ##, ###, no **bold**, no *italic*, no bullet dashes. Use emojis instead of markdown for structure. WhatsApp does not render markdown from the API.
 
 ANDROID AUTO OPTIMISED: Responses must work as voice. Keep summaries scannable. Group info logically. Default to short summaries — always offer more detail after.
 
@@ -221,11 +223,7 @@ async function analyseAttachment(attachment, question) {
 
 async function reviewReply(email, dictated, useExact) {
   if (useExact) return dictated;
-  return ask(
-    'Improve this dictated reply into a professional email. Keep same intent and tone. Plain text only. Return only the email body. IMPORTANT: Always sign off as "Raees" — never use any other name.',
-    'Original from ' + (email.fromName || email.from) + ':\nSubject: ' + email.subject + '\n' + email.preview + '\n\nDictated:\n' + dictated,
-    500
-  );
+  return ask('Improve this dictated reply into a professional email. Keep same intent and tone. Plain text only. Return only the email body.', 'Original from ' + (email.fromName || email.from) + ':\nSubject: ' + email.subject + '\n' + email.preview + '\n\nDictated:\n' + dictated, 500);
 }
 
 async function extractTask(email) {
@@ -254,12 +252,17 @@ ${emailList}
 Recent conversation:
 ${recentConvo}
 
-CRITICAL name matching:
-- Only match email if name is clearly present in sender name or email address
-- Do NOT suggest alternatives or guess — if no clear match set emailIndex to null
-- Raees knows who he means better than you
+CRITICAL name matching rules:
+- Match on first name only — if Raees says "Joanne", only match emails where sender name contains "Joanne" or "Jo" as a standalone word
+- Do NOT match based on subject, company, or any other field
+- Do NOT suggest alternative emails — if no sender name match, set emailIndex to null
+- Never match "Joanne" to "Hamid" or any other unrelated name
+- Raees knows exactly who he means
 
-Intents: update | morning_brief | period_update | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown
+Intents: update | morning_brief | period_update | calendar_today | calendar_tomorrow | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown
+
+calendar_today: asking about today's schedule/diary/calendar/appointments/meetings
+calendar_tomorrow: asking about tomorrow's schedule/diary/agenda/meetings/what's on
 
 Return JSON:
 { "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }
@@ -273,55 +276,9 @@ itemReference: what they're referring to for repeat/detail/attachment queries (e
   catch { return { intent: 'unknown' }; }
 }
 
-
-async function parseMultiIntent(text, session, conversation) {
-  const emailList = session ? session.emails.map((e, i) =>
-    '[' + (i+1) + '] idx=' + i + ' | name="' + (e.fromName || '') + '" | email="' + e.from + '" | subject="' + e.subject + '"'
-  ).join('\n') : 'No emails loaded.';
-
-  const recentConvo = conversation.slice(-4).map(c => c.role + ': ' + c.text).join('\n');
-
-  const Anthropic = require('@anthropic-ai/sdk');
-  const config = require('./config');
-  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
-
-  const msg = await client.messages.create({
-    model: 'claude-sonnet-4-5', max_tokens: 400,
-    system: `Parse WhatsApp commands. The user may give MULTIPLE instructions in one message. Return ONLY valid JSON array of intent objects.
-
-Current emails:
-${emailList}
-
-Recent conversation:
-${recentConvo}
-
-CRITICAL: Only match emails where the name is clearly in sender details. Never guess.
-
-Each intent object:
-{ "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }
-
-Intents: update | morning_brief | period_update | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown
-
-Return a JSON array even if only one intent. Example: [{"intent":"task","emailIndex":2},{"intent":"reply","personName":"Lilian","content":"thanks"}]`,
-    messages: [{ role: 'user', content: text }]
-  });
-
-  try {
-    const raw = msg.content[0].text.trim();
-    const m = raw.match(/\[[\s\S]*\]/);
-    if (m) {
-      const parsed = JSON.parse(m[0]);
-      return Array.isArray(parsed) ? parsed : [parsed];
-    }
-    // fallback: try single object
-    const obj = raw.match(/\{[\s\S]*\}/);
-    return obj ? [JSON.parse(obj[0])] : [{ intent: 'unknown' }];
-  } catch { return [{ intent: 'unknown' }]; }
-}
-
 module.exports = {
   summariseEmails, summariseWithContext, generateMorningBrief,
   analyseAttachment, reviewReply, extractTask, draftDelegation,
-  parseIntent, parseMultiIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
+  parseIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
   PRIORITY_HIGH, TEAM,
 };

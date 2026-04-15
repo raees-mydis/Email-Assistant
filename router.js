@@ -79,7 +79,7 @@ async function processIntent(parsed) {
       return handleEdit(parsed.content || '');
 
     case 'task':
-      return handleTask(parsed.emailIndex, parsed.personName);
+      return handleTask(parsed.emailIndex, parsed.personName, parsed.sectionHint);
 
     case 'delegate':
       return handleDelegate(parsed.emailIndex, parsed.delegateTo, parsed.personName);
@@ -265,7 +265,7 @@ async function handleEdit(newText) {
   return waSend(msg);
 }
 
-async function handleTask(emailIndex, personName) {
+async function handleTask(emailIndex, personName, sectionHint) {
   const session = store.getSession();
   if (!session) return waSend('No emails loaded - say "update" first 📬');
   const email = findEmail(session, emailIndex, personName);
@@ -273,9 +273,11 @@ async function handleTask(emailIndex, personName) {
   await waSend('Adding to Todoist... 📋');
   try {
     const taskData = await claude.extractTask(email);
+    taskData.section = sectionHint || 'operations';
     const task = await todoist.createTask(taskData);
     store.setEmailAction(email.id, 'tasked', task.content);
-    const msg = 'Done! ✅ Added to Operations (P2):\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string);
+    const sectionName = sectionHint ? sectionHint.charAt(0).toUpperCase() + sectionHint.slice(1) : 'Operations';
+    const msg = 'Done! ✅ Added to ' + sectionName + ' (P2):\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string);
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   } catch (err) {

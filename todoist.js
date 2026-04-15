@@ -4,10 +4,21 @@ const config = require('./config');
 const BASE           = 'https://api.todoist.com/api/v1';
 const PRIORITY_LEVEL = 3;
 
-let _sectionId = null;
+// Section name → ID mapping
+const SECTIONS = {
+  'operations':  null,
+  'accounts':    null,
+  'financial':   null,
+  'support':     null,
+  'install':     null,
+  'logistics':   null,
+  'sales':       null,
+};
 
-async function getSectionId() {
-  if (_sectionId) return _sectionId;
+let _sectionsLoaded = false;
+
+async function loadSections() {
+  if (_sectionsLoaded) return;
   try {
     const res = await axios.get(BASE + '/sections', {
       headers: { Authorization: 'Bearer ' + config.todoist.token },
@@ -15,14 +26,31 @@ async function getSectionId() {
     });
     const sections = res.data || [];
     console.log('[todoist] sections:', sections.map(s => s.id + ':' + s.name).join(', '));
-    const ops = sections.find(s => s.name.toLowerCase().includes('operation'));
-    _sectionId = ops ? ops.id : null;
-    console.log('[todoist] section id:', _sectionId);
-    return _sectionId;
+    for (const s of sections) {
+      const name = s.name.toLowerCase();
+      if (name.includes('operation'))  SECTIONS['operations'] = s.id;
+      if (name.includes('account') || name.includes('financial')) { SECTIONS['accounts'] = s.id; SECTIONS['financial'] = s.id; }
+      if (name.includes('support'))    SECTIONS['support'] = s.id;
+      if (name.includes('install'))    SECTIONS['install'] = s.id;
+      if (name.includes('logistic'))   SECTIONS['logistics'] = s.id;
+      if (name.includes('sales'))      SECTIONS['sales'] = s.id;
+    }
+    _sectionsLoaded = true;
+    console.log('[todoist] mapped sections:', JSON.stringify(SECTIONS));
   } catch (err) {
-    console.error('[todoist] section error:', err.message);
-    return null;
+    console.error('[todoist] section load error:', err.message);
   }
+}
+
+function matchSection(hint) {
+  if (!hint) return SECTIONS['operations']; // default
+  const h = hint.toLowerCase();
+  if (h.includes('operat'))              return SECTIONS['operations'];
+  if (h.includes('account') || h.includes('financ')) return SECTIONS['accounts'];
+  if (h.includes('support') || h.includes('ticket')) return SECTIONS['support'];
+  if (h.includes('install') || h.includes('logist')) return SECTIONS['install'];
+  if (h.includes('sales'))               return SECTIONS['sales'];
+  return SECTIONS['operations']; // default fallback
 }
 
 function headers() {
@@ -30,7 +58,8 @@ function headers() {
 }
 
 async function createTask(opts) {
-  const sectionId = await getSectionId();
+  await loadSections();
+  const sectionId = matchSection(opts.section);
   const body = {
     content:     opts.title,
     description: opts.description || '',

@@ -67,4 +67,22 @@ async function sendEmail(opts) {
   });
 }
 
-module.exports = { getUnreadEmails, replyToEmail, sendEmail };
+
+
+async function getSentEmails(searchTerm) {
+  const email = config.azure.userEmail;
+  const data = await graphGet('/users/' + email + '/mailFolders/SentItems/messages', {
+    '$search': '"' + searchTerm + '"',
+    '$select': 'id,subject,toRecipients,bodyPreview,sentDateTime',
+    '$top': 5,
+  });
+  return (data.value || []).map(m => ({
+    id: m.id,
+    subject: m.subject || '(no subject)',
+    to: m.toRecipients && m.toRecipients[0] ? m.toRecipients[0].emailAddress.address : 'unknown',
+    preview: m.bodyPreview || '',
+    sentAt: m.sentDateTime,
+  }));
+}
+
+module.exports = { getUnreadEmails, replyToEmail, sendEmail, getSentEmails };

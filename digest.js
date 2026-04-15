@@ -7,15 +7,20 @@ async function runDigest() {
   const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
   console.log('[digest] Running at', now);
   try {
-    const emails = await graph.getUnreadEmails(30);
+    const emails = await graph.getUnreadEmails(40);
     console.log('[digest] Fetched', emails.length, 'emails');
-    store.saveSession(emails);
-    const summary = await claude.summariseEmails(emails);
-    await whatsapp.send('Email digest - ' + now + '\n\n' + summary);
+
+    // Filter out emails sent by Raees himself
+    const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
+    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
+
+    store.saveSession(inbound);
+    const summary = await claude.summariseEmails(inbound);
+    await whatsapp.send('📬 *Email digest — ' + now + '*\n\n' + summary);
     console.log('[digest] Sent');
   } catch (err) {
     console.error('[digest] Error:', err.message);
-    try { await whatsapp.send('Digest failed: ' + err.message); } catch {}
+    try { await whatsapp.send('😕 Digest hit a snag: ' + err.message + '\n\nTry saying "update" again in a moment!'); } catch {}
   }
 }
 

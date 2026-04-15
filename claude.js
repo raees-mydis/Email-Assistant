@@ -221,7 +221,11 @@ async function analyseAttachment(attachment, question) {
 
 async function reviewReply(email, dictated, useExact) {
   if (useExact) return dictated;
-  return ask('Improve this dictated reply into a professional email. Keep same intent and tone. Plain text only. Return only the email body.', 'Original from ' + (email.fromName || email.from) + ':\nSubject: ' + email.subject + '\n' + email.preview + '\n\nDictated:\n' + dictated, 500);
+  return ask(
+    'Improve this dictated reply into a professional email. Keep same intent and tone. Plain text only. Return only the email body. IMPORTANT: Always sign off as "Raees" — never use any other name.',
+    'Original from ' + (email.fromName || email.from) + ':\nSubject: ' + email.subject + '\n' + email.preview + '\n\nDictated:\n' + dictated,
+    500
+  );
 }
 
 async function extractTask(email) {
@@ -269,53 +273,55 @@ itemReference: what they're referring to for repeat/detail/attachment queries (e
   catch { return { intent: 'unknown' }; }
 }
 
+
+async function parseMultiIntent(text, session, conversation) {
+  const emailList = session ? session.emails.map((e, i) =>
+    '[' + (i+1) + '] idx=' + i + ' | name="' + (e.fromName || '') + '" | email="' + e.from + '" | subject="' + e.subject + '"'
+  ).join('\n') : 'No emails loaded.';
+
+  const recentConvo = conversation.slice(-4).map(c => c.role + ': ' + c.text).join('\n');
+
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('./config');
+  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 400,
+    system: `Parse WhatsApp commands. The user may give MULTIPLE instructions in one message. Return ONLY valid JSON array of intent objects.
+
+Current emails:
+${emailList}
+
+Recent conversation:
+${recentConvo}
+
+CRITICAL: Only match emails where the name is clearly in sender details. Never guess.
+
+Each intent object:
+{ "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }
+
+Intents: update | morning_brief | period_update | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown
+
+Return a JSON array even if only one intent. Example: [{"intent":"task","emailIndex":2},{"intent":"reply","personName":"Lilian","content":"thanks"}]`,
+    messages: [{ role: 'user', content: text }]
+  });
+
+  try {
+    const raw = msg.content[0].text.trim();
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (m) {
+      const parsed = JSON.parse(m[0]);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+    // fallback: try single object
+    const obj = raw.match(/\{[\s\S]*\}/);
+    return obj ? [JSON.parse(obj[0])] : [{ intent: 'unknown' }];
+  } catch { return [{ intent: 'unknown' }]; }
+}
+
 module.exports = {
   summariseEmails, summariseWithContext, generateMorningBrief,
   analyseAttachment, reviewReply, extractTask, draftDelegation,
-  parseIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
+  parseIntent, parseMultiIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
   PRIORITY_HIGH, TEAM,
 };
-
-async function summariseCalendarDay(events, dayLabel) {
-  if (!events.length) return '📅 *' + dayLabel + ':* Calendar is clear! 🎉';
-
-  const block = events.map(e => {
-    let time = '';
-    if (e.isAllDay) {
-      time = 'All day';
-    } else if (e.startTime) {
-      const s = new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
-      const en = new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
-      time = s + ' – ' + en;
-    }
-    const loc = e.location ? ' @ ' + e.location : '';
-    const attendeeList = e.attendees.length ? 'With: ' + e.attendees.slice(0,4).join(', ') : '';
-    return time + ' — ' + e.subject + loc + (attendeeList ? '\n  ' + attendeeList : '');
-  }).join('\n\n');
-
-  return ask(
-    MASTER_SYSTEM,
-    `Summarise these calendar events for Raees's ${dayLabel}. Be concise and voice-friendly.
-
-For each event:
-- State the time and what it is
-- If it involves prep (meetings, calls, presentations) flag it with ⚠️ Prep needed
-- If it's with a key contact (client, investor, etc) flag with ⭐
-- Keep it short — this is read aloud in the car
-
-Format:
-📅 *${dayLabel}*
-[time] Event name
-[flag if needed]
-
-End with a count: "X events today/tomorrow"
-
-EVENTS:
-${block}`,
-    600
-  );
-}
-
-// Export the new function alongside existing ones
-const _originalExports = module.exports;
-module.exports = { ..._originalExports, summariseCalendarDay };

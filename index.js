@@ -1,86 +1,60 @@
-const config    = require('./config');
-const express   = require('express');
-const cron      = require('node-cron');
-const whatsapp  = require('./whatsapp');
-const router    = require('./router');
-const { runDigest } = require('./digest');
+const express = require('express');
+const cron    = require('node-cron');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// ─── Health check ─────────────────────────────────────────────────────────────
-
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'whatsapp-email-assistant', time: new Date().toISOString() });
+  res.json({ status: 'ok', service: 'whatsapp-email-assistant' });
 });
-
-// ─── Twilio inbound webhook ───────────────────────────────────────────────────
-// Twilio POSTs here whenever you send a WhatsApp message to your Twilio number.
 
 app.post('/webhook/whatsapp', async (req, res) => {
-  // Always respond 200 immediately — Twilio will retry if we don't
   res.sendStatus(200);
-
-  const { from, text } = whatsapp.parseInbound(req.body);
-
-  // Security: only process messages from your own number
-  if (!whatsapp.isAllowedSender(from)) {
-    console.warn(`[webhook] Ignored message from unknown sender: ${from}`);
-    return;
-  }
-
-  if (!text) return;
-
   try {
-    await router.handleInbound(text);
+    const whatsapp = require('./whatsapp');
+    const router   = require('./router');
+    const { from, text } = whatsapp.parseInbound(req.body);
+    console.log('[webhook] from:', from, 'text:', text);
+    if (!whatsapp.isAllowedSender(from)) {
+      console.log('[webhook] ignored unknown sender:', from);
+      return;
+    }
+    if (text) await router.handleInbound(text);
   } catch (err) {
-    console.error('[webhook] Handler error:', err.message);
-    try {
-      await whatsapp.send(`Error: ${err.message}`);
-    } catch {}
+    console.error('[webhook] error:', err.message);
   }
 });
-
-// ─── Manual digest trigger (useful for testing) ───────────────────────────────
 
 app.post('/trigger/digest', async (req, res) => {
   res.json({ status: 'triggered' });
   try {
+    const { runDigest } = require('./digest');
     await runDigest();
   } catch (err) {
-    console.error('[trigger] Digest error:', err.message);
+    console.error('[trigger] error:', err.message);
   }
 });
 
-// ─── Cron scheduler ───────────────────────────────────────────────────────────
-
-function startScheduler() {
-  const times = config.app.digestTimes;
-
-  times.forEach(expression => {
-    const trimmed = expression.trim();
-    if (!cron.validate(trimmed)) {
-      console.warn(`[cron] Invalid expression: "${trimmed}" — skipping`);
-      return;
-    }
-    cron.schedule(trimmed, runDigest, { timezone: 'Europe/London' });
-    console.log(`[cron] Digest scheduled: ${trimmed}`);
-  });
-
-  console.log(`[cron] ${times.length} digest(s) scheduled daily`);
-}
-
-// ─── Start ────────────────────────────────────────────────────────────────────
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log('\n✅  WhatsApp Email Assistant started');
-  console.log(`    Webhook:  http://localhost:${PORT}/webhook/whatsapp`);
-  console.log(`    Trigger:  POST http://localhost:${PORT}/trigger/digest`);
-  console.log(`    User:     ${config.azure.userEmail}`);
-  console.log(`    WhatsApp: ${config.twilio.toNumber}\n`);
-  startScheduler();
-});
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('WhatsApp Email Assistant running on port', PORT);
+  console.log('User:', process.env.USER_EMAIL);
+  console.log('WhatsApp:', process.env.YOUR_WHATSAPP_NUMBER);
 
-module.exports = app;
+  const times = (process.env.DIGEST_TIMES || '0 8 * * *,0 12 * * *,0 15 * * *').split(',');
+  times.forEach(t => {
+    const trimmed = t.trim();
+    if (cron.validate(trimmed)) {
+      cron.schedule(trimmed, async () => {
+        try {
+          const { runDigest } = require('./digest');
+          await runDigest();
+        } catch (err) {
+          console.error('[cron] error:', err.message);
+        }
+      }, { timezone: 'Europe/London' });
+      console.log('[cron] scheduled:', trimmed);
+    }
+  });
+});

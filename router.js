@@ -11,7 +11,7 @@ const DELEGATES = {
 async function handleInbound(text) {
   const lower = text.toLowerCase().trim();
   console.log('[router] command:', lower);
-
+if (lower === 'update') { await whatsapp.send('Fetching your emails...'); return require('./digest').runDigest(); }
   if (lower === 'send') return handleSend();
 
   const replyMatch = lower.match(/^reply\s+(\d+)(?:\s+([\s\S]+))?$/);

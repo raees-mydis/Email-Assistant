@@ -1,4 +1,4 @@
-require('dotenv').config();
+
 
 const required = [
   'AZURE_TENANT_ID',

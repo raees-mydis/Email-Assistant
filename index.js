@@ -1,9 +1,9 @@
-const config    = require('./src/config');
+const config    = require('./config');
 const express   = require('express');
 const cron      = require('node-cron');
-const whatsapp  = require('./src/whatsapp');
-const router    = require('./src/router');
-const { runDigest } = require('./src/digest');
+const whatsapp  = require('./whatsapp');
+const router    = require('./router');
+const { runDigest } = require('./digest');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));

@@ -3,6 +3,11 @@ const config = require('./config');
 
 let _cache = { token: null, expiresAt: 0 };
 
+const TEAM_EMAILS = [
+  'hamid@mydis.com','falak@mydis.com','lilian@mydis.com','craig@mydis.com',
+  'adegoke@mydis.com','basat@mydis.com','shams@mydis.com'
+];
+
 async function getToken() {
   if (_cache.token && Date.now() < _cache.expiresAt - 60000) return _cache.token;
   const { tenantId, clientId, clientSecret } = config.azure;
@@ -31,15 +36,38 @@ async function graphPost(path, body) {
   return res.data;
 }
 
+async function graphPatch(path, body) {
+  const token = await getToken();
+  await axios.patch('https://graph.microsoft.com/v1.0' + path, body, {
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  });
+}
+
 async function getUnreadEmails(max) {
   const email = config.azure.userEmail;
   const data = await graphGet('/users/' + email + '/messages', {
     '$filter': 'isRead eq false',
-    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments',
+    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
     '$orderby': 'receivedDateTime DESC',
-    '$top': max || 25,
+    '$top': max || 40,
   });
-  return (data.value || []).map(m => ({
+  return (data.value || []).map(mapMessage);
+}
+
+async function getRecentEmails(minutesBack) {
+  const email = config.azure.userEmail;
+  const since = new Date(Date.now() - minutesBack * 60 * 1000).toISOString();
+  const data = await graphGet('/users/' + email + '/messages', {
+    '$filter': "receivedDateTime ge " + since,
+    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
+    '$orderby': 'receivedDateTime DESC',
+    '$top': 50,
+  });
+  return (data.value || []).map(mapMessage);
+}
+
+function mapMessage(m) {
+  return {
     id: m.id,
     subject: m.subject || '(no subject)',
     from: m.from && m.from.emailAddress ? m.from.emailAddress.address : 'unknown',
@@ -48,23 +76,60 @@ async function getUnreadEmails(max) {
     receivedAt: m.receivedDateTime,
     importance: m.importance || 'normal',
     hasAttachments: m.hasAttachments || false,
-  }));
+    conversationId: m.conversationId || '',
+    isRead: m.isRead || false,
+  };
+}
+
+// Check if a team member has replied in this conversation
+async function getThreadTeamReplies(conversationId) {
+  if (!conversationId) return null;
+  const email = config.azure.userEmail;
+  try {
+    const data = await graphGet('/users/' + email + '/messages', {
+      '$filter': "conversationId eq '" + conversationId + "'",
+      '$select': 'from,sentDateTime,bodyPreview',
+      '$orderby': 'sentDateTime DESC',
+      '$top': 20,
+    });
+    const teamReplies = (data.value || []).filter(m => {
+      const addr = (m.from && m.from.emailAddress ? m.from.emailAddress.address : '').toLowerCase();
+      return TEAM_EMAILS.includes(addr);
+    });
+    if (!teamReplies.length) return null;
+    const latest = teamReplies[0];
+    const name = latest.from.emailAddress.name || latest.from.emailAddress.address.split('@')[0];
+    return { name, preview: latest.bodyPreview || '', sentAt: latest.sentDateTime };
+  } catch { return null; }
 }
 
 async function getAttachments(messageId) {
   const email = config.azure.userEmail;
   try {
     const data = await graphGet('/users/' + email + '/messages/' + messageId + '/attachments');
-    return (data.value || [])
-      .filter(a => !a.isInline)
-      .map(a => ({
-        id: a.id,
-        name: a.name || 'attachment',
-        contentType: a.contentType || '',
-        size: a.size || 0,
-        contentBytes: a.contentBytes || null,
-      }));
+    return (data.value || []).filter(a => !a.isInline).map(a => ({
+      id: a.id, name: a.name || 'attachment',
+      contentType: a.contentType || '', size: a.size || 0,
+      contentBytes: a.contentBytes || null,
+    }));
   } catch { return []; }
+}
+
+async function markAsRead(messageId) {
+  const email = config.azure.userEmail;
+  try {
+    await graphPatch('/users/' + email + '/messages/' + messageId, { isRead: true });
+    return true;
+  } catch { return false; }
+}
+
+async function markMultipleAsRead(messageIds) {
+  let count = 0;
+  for (const id of messageIds) {
+    if (await markAsRead(id)) count++;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return count;
 }
 
 async function replyToEmail(messageId, replyText) {
@@ -92,12 +157,10 @@ async function getSentEmails(searchTerm) {
     '$top': 5,
   });
   return (data.value || []).map(m => ({
-    id: m.id,
-    subject: m.subject || '(no subject)',
+    id: m.id, subject: m.subject || '(no subject)',
     to: m.toRecipients && m.toRecipients[0] ? m.toRecipients[0].emailAddress.address : 'unknown',
-    preview: m.bodyPreview || '',
-    sentAt: m.sentDateTime,
+    preview: m.bodyPreview || '', sentAt: m.sentDateTime,
   }));
 }
 
-module.exports = { getUnreadEmails, getAttachments, replyToEmail, sendEmail, getSentEmails };
+module.exports = { getUnreadEmails, getRecentEmails, getThreadTeamReplies, getAttachments, markAsRead, markMultipleAsRead, replyToEmail, sendEmail, getSentEmails, TEAM_EMAILS };

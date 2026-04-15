@@ -5,79 +5,52 @@ const todoist  = require('./todoist');
 const store    = require('./store');
 
 const DELEGATES = {
-  // 'lilian': 'lilian@yourdomain.com',
+  'hamid':   'hamid@mydis.com',
+  'falak':   'falak@mydis.com',
+  'lilian':  'lilian@mydis.com',
+  'craig':   'craig@mydis.com',
+  'adegoke': 'adegoke@mydis.com',
+  'ade':     'adegoke@mydis.com',
+  'basat':   'basat@mydis.com',
+  'bas':     'basat@mydis.com',
+  'shams':   'shams@mydis.com',
 };
-
-async function parseIntent(text) {
-  const Anthropic = require('@anthropic-ai/sdk');
-  const config = require('./config');
-  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
-
-  const session = store.getSession();
-  const emailList = session ? session.emails.map((e, i) =>
-    '[' + (i+1) + '] index=' + i + ' | name="' + (e.fromName || '') + '" | email="' + e.from + '" | subject="' + e.subject + '"'
-  ).join('\n') : 'No emails loaded.';
-
-  const msg = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 250,
-    system: `Parse a command for an email assistant. Return ONLY valid JSON, nothing else.
-
-Current emails:
-${emailList}
-
-CRITICAL name matching rules:
-- Only match an email if the name Raees mentions is clearly present in the sender name or email address
-- Do NOT suggest alternative emails or nearest matches
-- If Raees says "Joanne" only match emails where the sender name contains "Joanne" or similar
-- If no clear match, set emailIndex to null — do NOT guess
-- Raees knows who he means better than you do
-
-Intents: update | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | period_update | help | unknown
-
-period_update: asking for update on last X mins/hours (e.g. "what happened in the last hour", "update me on last 30 mins")
-- Set minutes field (integer): 60 for 1 hour, 30 for 30 mins, 1440 for today, etc
-
-Return JSON:
-{ "intent": "...", "emailIndex": null or 0-based integer, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or integer }`,
-    messages: [{ role: 'user', content: text }]
-  });
-
-  try {
-    const raw = msg.content[0].text.trim();
-    const m = raw.match(/\{[\s\S]*\}/);
-    return m ? JSON.parse(m[0]) : { intent: 'unknown' };
-  } catch { return { intent: 'unknown' }; }
-}
 
 async function handleInbound(text) {
   console.log('[router] received:', text);
+  store.saveConversationTurn('user', text);
 
-  // If we're awaiting a reply body, treat any message as the reply content
+  // If awaiting reply content, treat message as reply body
   const draft = store.getPendingDraft();
   if (draft && draft.awaitingReply) {
     const lower = text.toLowerCase().trim();
-    if (lower !== 'cancel' && lower !== 'send' && lower !== 'update') {
+    if (!['cancel','update','morning brief'].includes(lower)) {
       return handleReplyContent(text, draft);
     }
   }
 
-  const parsed = await parseIntent(text);
+  const session = store.getSession();
+  const conversation = store.getConversation();
+  const parsed = await claude.parseIntent(text, session, conversation);
   console.log('[router] intent:', JSON.stringify(parsed));
 
   switch (parsed.intent) {
     case 'update':
       await whatsapp.send('On it! 📬');
+      store.saveConversationTurn('aria', 'Fetching emails...');
       return require('./digest').runDigest();
+
+    case 'morning_brief':
+      return handleMorningBrief();
 
     case 'period_update':
       return handlePeriodUpdate(parsed.minutes || 60);
 
     case 'reply':
-      return handleReply(parsed.emailIndex, parsed.content, parsed.personName);
+      return handleReply(parsed.emailIndex, parsed.content, parsed.personName, parsed.useExact);
 
     case 'send':
-      return handleSend(text);
+      return handleSend();
 
     case 'edit':
       return handleEdit(parsed.content || text.replace(/^edit\s*/i, '').trim());
@@ -97,81 +70,134 @@ async function handleInbound(text) {
     case 'what_sent':
       return handleWhatSent(parsed.personName || parsed.content);
 
+    case 'mark_read':
+      return handleMarkRead(parsed.emailIndex, parsed.personName);
+
+    case 'repeat_item':
+      return handleRepeat(parsed.itemReference);
+
+    case 'more_detail':
+      return handleMoreDetail(parsed.emailIndex, parsed.personName, parsed.itemReference);
+
+    case 'attachment_query':
+      return handleAttachmentQuery(parsed.emailIndex, parsed.personName, parsed.content, parsed.itemReference);
+
+    case 'stakeholder_assign':
+      return handleStakeholderAssign(parsed.content);
+
     case 'help':
-      return whatsapp.send(
-        'Here\'s what you can ask me 👇\n\n' +
+      const helpMsg = 'Here\'s what you can ask me 👇\n\n' +
         '"update" — get digest now\n' +
-        '"what happened in the last hour" — full update for that period\n' +
-        '"reply to Joanne" — I\'ll ask what to say\n' +
-        '"task 3" — add to Todoist\n' +
-        '"delegate 2 to Lilian"\n' +
-        '"ignore emails from Katy Payne"\n' +
-        '"unsubscribe from email 4"\n' +
+        '"morning brief" — full morning summary\n' +
+        '"last hour / 30 mins" — period update\n' +
+        '"reply to Jo" — I\'ll ask what to say\n' +
+        '"use my exact words" — sends as-is\n' +
+        '"task 3" — add to Todoist (P2, Operations)\n' +
+        '"delegate 2 to Craig"\n' +
+        '"ignore emails from X"\n' +
+        '"mark the rest as read"\n' +
+        '"repeat the CPL one"\n' +
+        '"more detail on the invoice"\n' +
+        '"what\'s the total in that attachment?"\n' +
         '"what did I send to Jo?"\n' +
-        '"send" — dispatch pending draft'
-      );
+        '"Craig handles site issues" — remember this';
+      store.saveConversationTurn('aria', helpMsg);
+      return whatsapp.send(helpMsg);
 
     default:
-      await whatsapp.send('Hmm, not sure what you mean there 🤔 Say "help" for a list of things I can do!');
+      const reply = 'Hmm, not quite sure what you mean 🤔 Say "help" for the full list!';
+      store.saveConversationTurn('aria', reply);
+      return whatsapp.send(reply);
+  }
+}
+
+async function handleMorningBrief() {
+  await whatsapp.send('Good morning! Putting your brief together... ☀️');
+  try {
+    const [emails, tasks] = await Promise.all([
+      graph.getUnreadEmails(30),
+      todoist.getTodayTasks(),
+    ]);
+    const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
+    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
+    const stakeholders = store.getStakeholderAssignments();
+    const brief = await claude.generateMorningBrief(inbound, tasks, stakeholders);
+    store.saveConversationTurn('aria', brief);
+    await whatsapp.send(brief);
+  } catch (err) {
+    const msg = 'Couldn\'t pull the brief right now 😕 — ' + err.message;
+    store.saveConversationTurn('aria', msg);
+    await whatsapp.send(msg);
   }
 }
 
 async function handlePeriodUpdate(minutes) {
-  const session = store.getSession();
-  if (!session) {
-    await whatsapp.send('On it! 📬');
-    return require('./digest').runDigest();
-  }
   const label = minutes >= 1440 ? 'today' : minutes >= 60 ? 'the last ' + Math.round(minutes/60) + ' hour' + (minutes > 60 ? 's' : '') : 'the last ' + minutes + ' mins';
-  await whatsapp.send('Here\'s your update for ' + label + '... 🔍');
-  const actions = store.getEmailActions();
-  const summary = await claude.summariseWithContext(session.emails, minutes, actions);
-  await whatsapp.send(summary);
+  await whatsapp.send('Pulling your update for ' + label + '... 🔍');
+  try {
+    const emails = await graph.getRecentEmails(minutes);
+    const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
+    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
+    store.saveSession(inbound);
+    const actions = store.getEmailActions();
+    const stakeholders = store.getStakeholderAssignments();
+    const summary = await claude.summariseWithContext(inbound, minutes, actions, stakeholders);
+    store.saveConversationTurn('aria', summary);
+    await whatsapp.send(summary);
+  } catch (err) {
+    await whatsapp.send('Had a problem fetching that 😕 — ' + err.message);
+  }
 }
 
-async function handleReply(emailIndex, content, personName) {
+async function handleReply(emailIndex, content, personName, useExact) {
   const session = store.getSession();
-  if (!session) return whatsapp.send('No emails loaded yet — say "update" to fetch them first 📬');
-
+  if (!session) return whatsapp.send('No emails loaded — say "update" first 📬');
   const email = findEmail(session, emailIndex, personName);
   if (!email) {
-    if (personName) return whatsapp.send('I couldn\'t find an email from "' + personName + '" in the current digest 🔍\n\nSay "update" to refresh, or check the name matches what\'s shown in the digest.');
-    return whatsapp.send('Which email did you want to reply to? Give me a name or number from the digest 📬');
+    if (personName) return whatsapp.send('I couldn\'t find an email from "' + personName + '" in the current digest 🔍\n\nTry "update" to refresh, or check the name from the digest.');
+    return whatsapp.send('Which email did you want to reply to? Give me a name or number 📬');
   }
-
-  store.savePendingDraft({ messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject, draft: '', awaitingReply: true });
-
+  store.savePendingDraft({ messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject, draft: '', awaitingReply: true, useExact: useExact || false });
   if (!content) {
-    return whatsapp.send('Sure! ✉️ Replying to ' + (email.fromName || email.from) + ' re: ' + email.subject + '\n\nWhat would you like to say?');
+    const msg = 'Sure! ✉️ Replying to ' + (email.fromName || email.from) + '\nRe: ' + email.subject + '\n\nWhat would you like to say?';
+    store.saveConversationTurn('aria', msg);
+    return whatsapp.send(msg);
   }
-
-  return handleReplyContent(content, { messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject });
+  return handleReplyContent(content, { messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject, useExact: useExact || false });
 }
 
 async function handleReplyContent(content, draftInfo) {
-  await whatsapp.send('Polishing that up... ✍️');
+  const useExact = draftInfo.useExact || content.toLowerCase().includes('use my words') || content.toLowerCase().includes('use mine') || content.toLowerCase().includes('send as is');
+  await whatsapp.send(useExact ? 'Using your exact words ✍️' : 'Polishing that up... ✍️');
   const session = store.getSession();
   const email = session ? session.emails.find(e => e.id === draftInfo.messageId) : null;
-  const polished = email ? await claude.reviewReply(email, content) : content;
+  const polished = email ? await claude.reviewReply(email, content, useExact) : content;
   store.savePendingDraft({ ...draftInfo, draft: polished, awaitingReply: false });
-  await whatsapp.send('Here\'s your draft to ' + draftInfo.toName + ':\n\n' + polished + '\n\n✅ "send" to fire it off\n✏️ "edit [changes]" to tweak it');
+  const msg = 'Here\'s your draft to ' + draftInfo.toName + ':\n\n' + polished + '\n\n✅ "send" to fire it off\n✏️ "edit [changes]" to tweak\n💬 "use my exact words" to send as-is';
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
-async function handleSend(originalText) {
+async function handleSend() {
   const draft = store.getPendingDraft();
   if (!draft) return whatsapp.send('Nothing waiting to be sent! Start with "reply to [name]" 📝');
-  if (!draft.draft) return whatsapp.send('The draft is empty — say "edit [your reply]" to add content 📝');
+  if (!draft.draft) return whatsapp.send('The draft is empty — say "edit [your reply]" first 📝');
   await graph.replyToEmail(draft.messageId, draft.draft);
   store.setEmailAction(draft.messageId, 'replied', 'to ' + draft.toName);
+  store.removeChaseItem(draft.messageId);
   store.clearPendingDraft();
-  await whatsapp.send('Done! ✅ Reply sent to ' + draft.toName);
+  const msg = 'Done! ✅ Reply sent to ' + draft.toName;
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleEdit(newText) {
   const draft = store.getPendingDraft();
   if (!draft) return whatsapp.send('No draft to edit — start with "reply to [name]" first 📝');
   store.savePendingDraft({ ...draft, draft: newText, awaitingReply: false });
-  await whatsapp.send('Updated! ✏️\n\n' + newText + '\n\n"send" when you\'re happy 👍');
+  const msg = 'Updated! ✏️\n\n' + newText + '\n\n"send" when you\'re happy 👍';
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleTask(emailIndex, personName) {
@@ -183,7 +209,9 @@ async function handleTask(emailIndex, personName) {
   const taskData = await claude.extractTask(email);
   const task = await todoist.createTask(taskData);
   store.setEmailAction(email.id, 'tasked', task.content);
-  await whatsapp.send('Done! ✅ Task added:\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string));
+  const msg = 'Done! ✅ Added to Operations (P2):\n"' + task.content + '"\nDue: ' + (task.due ? task.due.string : taskData.due_string);
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleDelegate(emailIndex, delegateTo, personName) {
@@ -191,37 +219,31 @@ async function handleDelegate(emailIndex, delegateTo, personName) {
   if (!session) return whatsapp.send('No emails loaded — say "update" first 📬');
   const email = findEmail(session, emailIndex, personName);
   if (!email) return whatsapp.send('Couldn\'t find that email 🔍');
-  if (!delegateTo) return whatsapp.send('Who should I delegate this to? Say "delegate [number] to [name]" 👤');
+  if (!delegateTo) return whatsapp.send('Who should I delegate this to? 👤');
   const delegateEmail = DELEGATES[delegateTo.toLowerCase()];
-  if (!delegateEmail) return whatsapp.send('I don\'t have ' + delegateTo + '\'s email address yet 👤\n\nAdd it to the DELEGATES list in router.js and I\'ll handle it from there!');
-  await whatsapp.send('Drafting the brief for ' + delegateTo + '... ✍️');
+  if (!delegateEmail) return whatsapp.send('I don\'t have ' + delegateTo + '\'s email — let me know their address and I\'ll add it! 👤');
+  await whatsapp.send('Drafting brief for ' + delegateTo + '... ✍️');
   const brief = await claude.draftDelegation(email, delegateTo);
   await graph.sendEmail({ to: delegateEmail, subject: 'For your action: ' + email.subject, body: brief });
   store.setEmailAction(email.id, 'delegated', 'to ' + delegateTo);
-  await whatsapp.send('Done! ✅ Brief sent to ' + delegateTo + ' (' + delegateEmail + ')');
+  const msg = 'Done! ✅ Brief sent to ' + delegateTo + ' (' + delegateEmail + ')';
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleIgnore(emailIndex, personName) {
   const session = store.getSession();
-  let domainToIgnore = null;
-  let nameToIgnore = personName;
-
+  let domainToIgnore = null, nameToIgnore = personName;
   if (session && (emailIndex !== null || personName)) {
     const email = findEmail(session, emailIndex, personName);
-    if (email) {
-      domainToIgnore = email.from.includes('@') ? email.from.split('@')[1] : email.from;
-      nameToIgnore = email.fromName || email.from;
-    }
+    if (email) { domainToIgnore = email.from.includes('@') ? email.from.split('@')[1] : email.from; nameToIgnore = email.fromName || email.from; }
   }
-
-  if (!domainToIgnore && personName) {
-    domainToIgnore = personName.toLowerCase().includes('@') ? personName.split('@')[1] : personName;
-  }
-
+  if (!domainToIgnore && personName) domainToIgnore = personName.toLowerCase().includes('@') ? personName.split('@')[1] : personName;
   if (!domainToIgnore) return whatsapp.send('Who should I ignore? Say "ignore emails from [name]" 👍');
-
   claude.addIgnored(domainToIgnore);
-  await whatsapp.send('Got it! 🙅 I\'ll filter out ' + (nameToIgnore || domainToIgnore) + ' from now on.');
+  const msg = 'Got it! 🙅 Filtering out ' + (nameToIgnore || domainToIgnore) + ' from now on.';
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
 }
 
 async function handleUnsubscribe(emailIndex, personName) {
@@ -231,14 +253,16 @@ async function handleUnsubscribe(emailIndex, personName) {
     if (email) {
       const domain = email.from.includes('@') ? email.from.split('@')[1] : email.from;
       claude.addIgnored(domain);
-      return whatsapp.send('Done! 🙅 I\'ll stop bringing ' + (email.fromName || domain) + ' to your attention.');
+      const msg = 'Done! 🙅 I\'ll stop showing emails from ' + (email.fromName || domain) + '.';
+      store.saveConversationTurn('aria', msg);
+      return whatsapp.send(msg);
     }
   }
-  await whatsapp.send('Which sender? Give me the email number or their name 👍');
+  return whatsapp.send('Which sender? Give me the email number or their name 👍');
 }
 
 async function handleWhatSent(personOrTopic) {
-  if (!personOrTopic) return whatsapp.send('Who did you send something to? Say "what did I send to [name]?" 🔍');
+  if (!personOrTopic) return whatsapp.send('Who did you send something to? 🔍');
   try {
     const emails = await graph.getSentEmails(personOrTopic);
     if (!emails.length) return whatsapp.send('No recent emails to ' + personOrTopic + ' found 🔍');
@@ -247,33 +271,139 @@ async function handleWhatSent(personOrTopic) {
       new Date(e.sentAt).toLocaleString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) +
       '\n' + e.preview
     ).join('\n\n');
-    await whatsapp.send('Here\'s what you sent 📤\n\n' + list);
-  } catch (err) {
-    await whatsapp.send('Had trouble looking that up 😕 — ' + err.message);
-  }
+    const msg = 'Here\'s what you sent 📤\n\n' + list;
+    store.saveConversationTurn('aria', msg);
+    return whatsapp.send(msg);
+  } catch (err) { return whatsapp.send('Had trouble looking that up 😕 — ' + err.message); }
 }
 
-// Strict name matching — only match if the name is clearly in the sender details
-function findEmail(session, emailIndex, personName) {
-  if (!session || !session.emails) return null;
+async function handleMarkRead(emailIndex, personName) {
+  const session = store.getSession();
+  if (!session) return whatsapp.send('No emails loaded 📬');
 
-  // Exact index match
-  if (emailIndex !== null && emailIndex !== undefined && !isNaN(emailIndex)) {
-    return session.emails[emailIndex] || null;
+  if (emailIndex !== null || personName) {
+    const email = findEmail(session, emailIndex, personName);
+    if (email) {
+      await graph.markAsRead(email.id);
+      store.setEmailAction(email.id, 'read', 'marked as read');
+      return whatsapp.send('Done! ✅ Marked as read.');
+    }
   }
 
-  // Name match — strict, only match on what Raees said
+  // Mark all unactioned emails as read
+  const actions = store.getEmailActions();
+  const toMark = session.emails.filter(e => !actions[e.id]).map(e => e.id);
+  if (!toMark.length) return whatsapp.send('Nothing left to mark as read 👍');
+  await whatsapp.send('Marking ' + toMark.length + ' emails as read... 📖');
+  const count = await graph.markMultipleAsRead(toMark);
+  toMark.forEach(id => store.setEmailAction(id, 'read', 'marked as read'));
+  const msg = 'Done! ✅ Marked ' + count + ' emails as read.';
+  store.saveConversationTurn('aria', msg);
+  return whatsapp.send(msg);
+}
+
+async function handleRepeat(itemReference) {
+  const context = store.getDigestContext();
+  const session = store.getSession();
+  if (!context && !session) return whatsapp.send('Nothing to repeat — say "update" to get a fresh digest 📬');
+
+  if (itemReference && session) {
+    const email = findEmailByKeyword(session, itemReference);
+    if (email) {
+      const date = new Date(email.receivedAt).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const msg = '🔁 Here\'s that one again:\n\n👤 ' + (email.fromName || email.from) + '\n📧 ' + email.subject + '\n📅 ' + date + '\n\n' + email.preview;
+      store.saveConversationTurn('aria', msg);
+      return whatsapp.send(msg);
+    }
+  }
+  return whatsapp.send('Which one do you want me to repeat? Give me a name or keyword 🔍');
+}
+
+async function handleMoreDetail(emailIndex, personName, itemReference) {
+  const session = store.getSession();
+  if (!session) return whatsapp.send('No emails loaded — say "update" first 📬');
+  const email = emailIndex !== null || personName
+    ? findEmail(session, emailIndex, personName)
+    : itemReference ? findEmailByKeyword(session, itemReference) : null;
+  if (!email) return whatsapp.send('Which email do you want more detail on? 🔍');
+
+  await whatsapp.send('Getting the full details... 🔍');
+  try {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const config = require('./config');
+    const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+    const fullEmail = await graph.graphGet ? null : null; // use preview for now
+
+    const date = new Date(email.receivedAt).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+    let detail = '📧 *' + email.subject + '*\n👤 ' + (email.fromName || email.from) + ' <' + email.from + '>\n📅 ' + date + '\n\n' + email.preview;
+
+    if (email.hasAttachments) {
+      const attachments = await graph.getAttachments(email.id);
+      for (const att of attachments.slice(0, 2)) {
+        const summary = await claude.analyseAttachment(att);
+        if (summary) detail += '\n\n📎 *' + att.name + '*\n' + summary;
+      }
+    }
+    store.saveConversationTurn('aria', detail);
+    return whatsapp.send(detail);
+  } catch (err) { return whatsapp.send('Had trouble getting that 😕 — ' + err.message); }
+}
+
+async function handleAttachmentQuery(emailIndex, personName, question, itemReference) {
+  const session = store.getSession();
+  if (!session) return whatsapp.send('No emails loaded — say "update" first 📬');
+  const email = findEmail(session, emailIndex, personName) || (itemReference ? findEmailByKeyword(session, itemReference) : null);
+  if (!email) return whatsapp.send('Which email\'s attachment are you asking about? 🔍');
+  if (!email.hasAttachments) return whatsapp.send('That email doesn\'t have any attachments 📎');
+
+  await whatsapp.send('Scanning the attachment... 🔍');
+  try {
+    const attachments = await graph.getAttachments(email.id);
+    const docAtts = attachments.filter(a => a.contentBytes && (a.contentType.includes('pdf') || a.contentType.includes('word') || a.contentType.includes('document')));
+    if (!docAtts.length) return whatsapp.send('I couldn\'t read that attachment type 😕 — I can only read PDFs and Word docs.');
+    const result = await claude.analyseAttachment(docAtts[0], question);
+    const msg = result || 'Couldn\'t extract that info from the attachment 😕';
+    store.saveConversationTurn('aria', msg);
+    return whatsapp.send(msg);
+  } catch (err) { return whatsapp.send('Had trouble reading that 😕 — ' + err.message); }
+}
+
+async function handleStakeholderAssign(content) {
+  if (!content) return whatsapp.send('What should I remember? E.g. "Craig handles site issues" 👍');
+  // Simple extraction: look for name pattern
+  const match = content.match(/^(\w+)\s+handles?\s+(.+)$/i);
+  if (match) {
+    store.saveStakeholderAssignment(match[2], match[1]);
+    const msg = 'Got it! 🧠 I\'ll remember that ' + match[1] + ' handles ' + match[2] + '.';
+    store.saveConversationTurn('aria', msg);
+    return whatsapp.send(msg);
+  }
+  return whatsapp.send('Got it, noted 🧠');
+}
+
+function findEmail(session, emailIndex, personName) {
+  if (!session || !session.emails) return null;
+  if (emailIndex !== null && emailIndex !== undefined && !isNaN(emailIndex)) return session.emails[emailIndex] || null;
   if (personName) {
     const parts = personName.toLowerCase().trim().split(/\s+/);
     return session.emails.find(e => {
       const senderName = (e.fromName || '').toLowerCase();
       const senderEmail = e.from.toLowerCase();
-      // All parts of the name must appear in the sender name or email
-      return parts.every(part => senderName.includes(part) || senderEmail.includes(part));
+      return parts.every(p => senderName.includes(p) || senderEmail.includes(p));
     }) || null;
   }
-
   return null;
+}
+
+function findEmailByKeyword(session, keyword) {
+  if (!session || !session.emails || !keyword) return null;
+  const kw = keyword.toLowerCase();
+  return session.emails.find(e =>
+    (e.fromName || '').toLowerCase().includes(kw) ||
+    e.from.toLowerCase().includes(kw) ||
+    e.subject.toLowerCase().includes(kw) ||
+    e.preview.toLowerCase().includes(kw)
+  ) || null;
 }
 
 module.exports = { handleInbound };

@@ -13,13 +13,19 @@ async function runDigest() {
   console.log('[digest] Running at', now, '(hour:', hour + ')');
 
   try {
-    // ── Fetch emails ──────────────────────────────────────────────────────
-    const emails = await graph.getUnreadEmails(40);
     const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
-    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
 
-    // Thread detection
-    for (const email of inbound) {
+    // Fetch both inboxes in parallel
+    const [mydisEmails, iwsEmails] = await Promise.all([
+      graph.getUnreadEmails(40),
+      graph.getIwsUnreadEmails(40),
+    ]);
+
+    const mydisInbound = mydisEmails.filter(e => !e.from.toLowerCase().includes(userEmail));
+    const iwsInbound   = iwsEmails.filter(e => !e.from.toLowerCase().includes('raees@iwsuk.com'));
+
+    // Thread detection for MYDIS emails
+    for (const email of mydisInbound) {
       if (email.conversationId) {
         try {
           const teamReply = await graph.getThreadTeamReplies(email.conversationId);
@@ -28,11 +34,11 @@ async function runDigest() {
       }
     }
 
-    // Attachment analysis
-    for (const email of inbound) {
+    // Attachment analysis for both
+    for (const email of [...mydisInbound, ...iwsInbound]) {
       if (email.hasAttachments) {
         try {
-          const attachments = await graph.getAttachments(email.id);
+          const attachments = await graph.getAttachments(email.id, email.account);
           const docAtts = attachments.filter(a =>
             a.contentBytes && (
               a.contentType.includes('pdf') || a.contentType.includes('word') ||
@@ -55,47 +61,69 @@ async function runDigest() {
       if (hoursSince > 48) chaseAlerts.push(item.subject + ' (' + item.from + ')');
     }
 
-    store.saveSession(inbound);
+    // Save combined session (MYDIS first, then IWS)
+    const allEmails = [...mydisInbound, ...iwsInbound];
+    store.saveSession(allEmails);
+
     const stakeholders = store.getStakeholderAssignments();
-    const emailSummary = await claude.summariseEmails(inbound, stakeholders);
 
-    // ── Calendar ──────────────────────────────────────────────────────────
-    let calendarSection = '';
+    // Summarise each inbox separately
+    const mydisSummary = await claude.summariseEmails(mydisInbound, stakeholders, 'MYDIS');
+    const iwsSummary   = iwsInbound.length > 0
+      ? await claude.summariseEmails(iwsInbound, stakeholders, 'IWS')
+      : null;
 
+    // Build message
+    let message = '📬 *' + now + '*\n\n';
+    message += '🏢 *MYDIS (raees@mydis.com)*\n' + mydisSummary;
+    if (iwsSummary) {
+      message += '\n\n---\n\n🏭 *IWS (raees@iwsuk.com)*\n' + iwsSummary;
+    }
+
+    // Calendar section
     if (hour === 7 || hour === 6) {
-      // 7am: show TODAY's calendar
       try {
-        const todayEvents = await graph.getCalendarEvents(0);
-        const calSummary = await claude.summariseCalendarDay(todayEvents, 'Today');
-        calendarSection = '\n\n' + calSummary;
+        const events = await graph.getCombinedCalendarEvents(0);
+        if (events.length) {
+          const lines = events.map(e => {
+            const time = e.isAllDay ? 'All day' : (e.startTime ? new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' - ' + new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : '');
+            const acct = e.account === 'iws' ? ' [IWS]' : '';
+            return '🕐 ' + time + ' - ' + e.subject + acct;
+          }).join('\n');
+          message += '\n\n---\n\n📅 *Today*\n' + lines;
+        } else {
+          message += '\n\n📅 *Today:* Calendar is clear 🎉';
+        }
       } catch (err) { console.error('[digest] calendar error:', err.message); }
 
     } else if (hour === 17 || hour === 16) {
-      // 5pm: show TOMORROW's calendar
       try {
-        const tomorrowEvents = await graph.getCalendarEvents(1);
-        const tomorrowDate = new Date();
-        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-        const dayName = tomorrowDate.toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long' });
-        const calSummary = await claude.summariseCalendarDay(tomorrowEvents, 'Tomorrow — ' + dayName);
-        calendarSection = '\n\n' + calSummary;
+        const events = await graph.getCombinedCalendarEvents(1);
+        const dayName = new Date(Date.now() + 86400000).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long' });
+        if (events.length) {
+          const lines = events.map(e => {
+            const time = e.isAllDay ? 'All day' : (e.startTime ? new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' - ' + new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : '');
+            const acct = e.account === 'iws' ? ' [IWS]' : '';
+            return '🕐 ' + time + ' - ' + e.subject + acct;
+          }).join('\n');
+          message += '\n\n---\n\n📅 *Tomorrow - ' + dayName + '*\n' + lines;
+        } else {
+          message += '\n\n📅 *Tomorrow:* Calendar is clear 🎉';
+        }
       } catch (err) { console.error('[digest] calendar error:', err.message); }
     }
-
-    // ── Assemble message ──────────────────────────────────────────────────
-    let message = '📬 *' + now + '*\n\n' + emailSummary + calendarSection;
 
     if (chaseAlerts.length) {
       message += '\n\n⏰ *Still waiting on replies:*\n' + chaseAlerts.map(c => '• ' + c).join('\n');
     }
 
-    store.saveConversationTurn('aria', message);
+    store.saveConversationTurn('penelope', message);
     await whatsapp.send(message);
     console.log('[digest] Sent');
 
   } catch (err) {
     console.error('[digest] Error:', err.message);
-    try { await whatsapp.send('😕 Hit a snag: ' + err.message + '\n\nTry "update" again in a moment!'); } catch {}
+    try { await whatsapp.send('😕 Hit a snag: ' + err.message + '\n\nTry "update" again!'); } catch {}
   }
 }
 

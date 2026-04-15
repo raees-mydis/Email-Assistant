@@ -100,7 +100,7 @@ DECISION SUPPORT: End each email item with a recommended action (Reply / Delegat
 
 DRIVING MODE DEFAULT: Always give short summary first. End with "Want me to action any of these?" If user asks for more detail, expand only that item.`;
 
-async function summariseEmails(emails, stakeholders) {
+async function summariseEmails(emails, stakeholders, accountLabel) {
   if (!emails.length) return 'All clear — nothing needs your attention right now! 🎉';
 
   const prioritised = emails

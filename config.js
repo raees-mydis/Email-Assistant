@@ -19,6 +19,12 @@ module.exports = {
     clientSecret: process.env.AZURE_CLIENT_SECRET,
     userEmail:    process.env.USER_EMAIL,
   },
+  iws: process.env.IWS_TENANT_ID ? {
+    tenantId:     process.env.IWS_TENANT_ID,
+    clientId:     process.env.IWS_CLIENT_ID,
+    clientSecret: process.env.IWS_CLIENT_SECRET,
+    userEmail:    'raees@iwsuk.com',
+  } : null,
   anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
   twilio: {
     accountSid:    process.env.TWILIO_ACCOUNT_SID,

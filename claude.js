@@ -276,9 +276,39 @@ itemReference: what they're referring to for repeat/detail/attachment queries (e
   catch { return { intent: 'unknown' }; }
 }
 
+
+async function parseMultiIntent(text, session, conversation) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('./config');
+  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  const emailList = session ? session.emails.map((e, i) =>
+    '[' + (i+1) + '] idx=' + i + ' | name="' + (e.fromName || '') + '" | email="' + e.from + '" | subject="' + e.subject + '"'
+  ).join('\n') : 'No emails loaded.';
+
+  const recentConvo = (conversation || []).slice(-4).map(c => c.role + ': ' + c.text).join('\n');
+
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 400,
+    system: 'Parse WhatsApp commands for an email assistant. The user may give MULTIPLE instructions. Return ONLY a valid JSON array of intent objects.\n\nCurrent emails:\n' + emailList + '\n\nRecent conversation:\n' + recentConvo + '\n\nCRITICAL: Only match emails where the name is clearly in sender details. Never guess.\n\nIntents: update | morning_brief | period_update | calendar_today | calendar_tomorrow | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown\n\ncalendar_today: asking about today schedule/diary/calendar\ncalendar_tomorrow: asking about tomorrow schedule/diary/agenda/meetings\nperiod_update: last X hours/mins\n\nEach object: { "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }\n\nReturn array even for one intent.',
+    messages: [{ role: 'user', content: text }]
+  });
+
+  try {
+    const raw = msg.content[0].text.trim();
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (m) {
+      const parsed = JSON.parse(m[0]);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+    const obj = raw.match(/\{[\s\S]*\}/);
+    return obj ? [JSON.parse(obj[0])] : [{ intent: 'unknown' }];
+  } catch { return [{ intent: 'unknown' }]; }
+}
+
 module.exports = {
   summariseEmails, summariseWithContext, generateMorningBrief,
   analyseAttachment, reviewReply, extractTask, draftDelegation,
-  parseIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
+  parseIntent, parseMultiIntent, addIgnored, isIgnored, getPriorityLevel, MASTER_SYSTEM,
   PRIORITY_HIGH, TEAM,
 };

@@ -126,7 +126,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 @keyframes softPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
 
   /* PIN lock screen */
-  #pin-screen { position: fixed; inset: 0; background: var(--bg); z-index: 999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
+  #pin-screen { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
   #pin-screen.hidden { display: none; }
   #pin-logo { width: 72px; height: 72px; border-radius: 50%; background: linear-gradient(135deg, #c4baff, #9d8fff); display: flex; align-items: center; justify-content: center; font-family: Georgia, serif; font-size: 36px; color: white; box-shadow: 0 4px 20px rgba(124,106,247,0.3); }
   #pin-title { font-size: 22px; font-weight: 600; color: var(--text); }
@@ -236,6 +236,13 @@ What would you like to do?</div>
       <input type="range" min="0.7" max="1.3" step="0.05" value="0.95" id="speed-sl" oninput="cfg.speed=+this.value;saveC()" style="width:100px;accent-color:#7c6af7">
     </div>
     <div class="srow">
+      <div><div class="srow-label">Voice accent</div><div class="srow-sub">British or American</div></div>
+      <div style="display:flex;gap:6px">
+        <button id="accent-gb" onclick="setAccent('british')" style="padding:6px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--accent-soft);color:var(--accent);font-size:13px;cursor:pointer">🇬🇧 British</button>
+        <button id="accent-us" onclick="setAccent('american')" style="padding:6px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:13px;cursor:pointer">🇺🇸 American</button>
+      </div>
+    </div>
+    <div class="srow">
       <div><div class="srow-label">Wake word</div><div class="srow-sub">Say "Hey Penelope" to activate</div></div>
       <button class="tgl" id="tgl-wake" onclick="toggle('wake',this);cfg.wake?startWake():stopWake()"></button>
     </div>
@@ -251,7 +258,7 @@ What would you like to do?</div>
 <script>
 const BACKEND = 'https://email-assistant-production-8a69.up.railway.app';
 
-let cfg = { autoread: true, wake: false, speed: 0.95, backendUrl: BACKEND, muted: false };
+let cfg = { autoread: true, wake: false, speed: 0.95, backendUrl: BACKEND, muted: false, voiceAccent: 'british' };
 function saveC() { localStorage.setItem('pen_cfg', JSON.stringify(cfg)); }
 function loadC() {
   try { cfg = { ...cfg, ...JSON.parse(localStorage.getItem('pen_cfg') || '{}') }; } catch {}
@@ -260,10 +267,20 @@ function loadC() {
   setTgl('tgl-read', cfg.autoread);
   setTgl('tgl-wake', cfg.wake);
   if (cfg.muted) { document.getElementById('mute-btn').textContent = '🔇'; document.getElementById('mute-btn').classList.add('muted'); }
+  setTimeout(() => setAccent(cfg.voiceAccent || 'british'), 100);
 }
 
 function setTgl(id, val) { document.getElementById(id).classList.toggle('on', !!val); }
 function toggle(key, btn) { cfg[key] = !cfg[key]; btn.classList.toggle('on', cfg[key]); saveC(); }
+
+function setAccent(accent) {
+  cfg.voiceAccent = accent;
+  saveC();
+  document.getElementById('accent-gb').style.background = accent === 'british' ? 'var(--accent-soft)' : 'var(--surface2)';
+  document.getElementById('accent-gb').style.color = accent === 'british' ? 'var(--accent)' : 'var(--text2)';
+  document.getElementById('accent-us').style.background = accent === 'american' ? 'var(--accent-soft)' : 'var(--surface2)';
+  document.getElementById('accent-us').style.color = accent === 'american' ? 'var(--accent)' : 'var(--text2)';
+}
 
 // ── Mute ─────────────────────────────────────────────────────────────────────
 function toggleMute() {
@@ -429,21 +446,19 @@ if (window.speechSynthesis) {
 
 function getBestVoice() {
   if (!voiceLoaded) loadVoices();
-  const preferred = [
-    'Google UK English Female',
-    'Microsoft Hazel',
-    'Microsoft Susan',
-    'Karen',
-    'Serena',
-  ];
+  const accent = cfg.voiceAccent || 'british';
+  
+  const british = ['Google UK English Female','Microsoft Hazel','Microsoft Susan'];
+  const american = ['Google US English Female','Microsoft Zira','Microsoft Aria','Samantha','Victoria'];
+  
+  const preferred = accent === 'american' ? american : british;
   for (const p of preferred) {
     const v = voices.find(v => v.name.includes(p));
     if (v) return v;
   }
-  // Any en-GB female-sounding voice
-  const gbVoice = voices.find(v => v.lang === 'en-GB');
-  if (gbVoice) return gbVoice;
-  return voices[0] || null;
+  // Fallback by lang
+  const lang = accent === 'american' ? 'en-US' : 'en-GB';
+  return voices.find(v => v.lang === lang) || voices.find(v => v.lang.startsWith('en')) || voices[0] || null;
 }
 
 function speak(text) {

@@ -438,26 +438,38 @@ function startListen(e) {
   };
 
   rec.onend = () => {
-    if (!listening) {
-      document.getElementById('interim').style.display = 'none';
-      document.getElementById('interim').textContent = '';
-      if (finalText.trim()) send(finalText.trim());
-      else setMic('idle');
+    document.getElementById('interim').style.display = 'none';
+    document.getElementById('interim').textContent = '';
+    listening = false;
+    const captured = finalText.trim();
+    if (captured) {
+      send(captured);
+    } else {
+      setMic('idle');
     }
   };
 
   rec.onerror = ev => {
-    if (ev.error !== 'aborted') { setStatus('Mic: ' + ev.error); setMic('idle'); }
+    listening = false;
+    if (ev.error === 'no-speech') {
+      setMic('idle');
+      setStatus('Nothing heard — try again');
+    } else if (ev.error !== 'aborted') {
+      setStatus('Mic: ' + ev.error);
+      setMic('idle');
+    }
   };
 
-  try { rec.start(); } catch {}
+  try { rec.start(); } catch(err) { listening = false; setMic('idle'); }
 }
 
 function stopListen(e) {
   if (e) e.preventDefault();
-  listening = false;
-  setMic('idle');
-  if (rec) { try { rec.stop(); } catch {} }
+  if (!listening) return;
+  // Small delay before stopping — gives mobile time to process final result
+  setTimeout(() => {
+    if (rec) { try { rec.stop(); } catch {} }
+  }, 300);
 }
 
 // ── Text to speech ────────────────────────────────────────────────────────────

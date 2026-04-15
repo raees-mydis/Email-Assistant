@@ -81,13 +81,17 @@ async function getTodayTasks() {
       headers: { Authorization: 'Bearer ' + config.todoist.token },
       params: { project_id: config.todoist.projectId }
     });
-    const all = res.data || [];
+    // API v1 returns { results: [...] }, API v2 returned array directly
+    const all = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
+    console.log('[todoist] fetched', all.length, 'tasks');
     const today = new Date().toISOString().split('T')[0];
-    return all.filter(t => {
+    const due = all.filter(t => {
       if (!t.due) return false;
       const dueDate = t.due.date;
       return dueDate <= today;
     });
+    console.log('[todoist] tasks due today:', due.length);
+    return due;
   } catch (err) {
     console.error('[todoist] getTodayTasks error:', err.message);
     return [];

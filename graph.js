@@ -179,7 +179,16 @@ async function markMultipleAsRead(messageIds, account) {
 async function replyToEmail(messageId, replyText, account) {
   const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
   const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
-  await graphPost('/users/' + email + '/messages/' + messageId + '/reply', { comment: replyText }, tokenFn);
+  // Step 1: Create a draft reply
+  const draft = await graphPost('/users/' + email + '/messages/' + messageId + '/createReply', {}, tokenFn);
+  // Step 2: Update the draft body
+  const token = await tokenFn();
+  const axios = require('axios');
+  await axios.patch('https://graph.microsoft.com/v1.0/users/' + email + '/messages/' + draft.id, {
+    body: { contentType: 'Text', content: replyText }
+  }, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } });
+  // Step 3: Send it — this saves to Sent Items automatically
+  await graphPost('/users/' + email + '/messages/' + draft.id + '/send', {}, tokenFn);
 }
 
 async function sendEmail(opts, account) {

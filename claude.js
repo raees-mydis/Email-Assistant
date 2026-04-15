@@ -265,7 +265,7 @@ calendar_today: asking about today's schedule/diary/calendar/appointments/meetin
 calendar_tomorrow: asking about tomorrow's schedule/diary/agenda/meetings/what's on
 
 Return JSON:
-{ "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }
+{ "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string, "taskIndex": null or 0-based int }
 
 useExact: true if user says "use my words" / "send as is" / "use mine"
 itemReference: what they're referring to for repeat/detail/attachment queries (e.g. "the CPL one", "invoice")`,
@@ -290,7 +290,7 @@ async function parseMultiIntent(text, session, conversation) {
 
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-5', max_tokens: 400,
-    system: 'Parse WhatsApp commands for an email assistant. The user may give MULTIPLE instructions. Return ONLY a valid JSON array of intent objects.\n\nCurrent emails:\n' + emailList + '\n\nRecent conversation:\n' + recentConvo + '\n\nCRITICAL: Only match emails where the name is clearly in sender details. Never guess.\n\nIntents: update | morning_brief | period_update | calendar_today | calendar_tomorrow | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | help | unknown\n\ncalendar_today: asking about today schedule/diary/calendar\ncalendar_tomorrow: asking about tomorrow schedule/diary/agenda/meetings\nperiod_update: last X hours/mins\n\nEach object: { "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string }\n\nReturn array even for one intent.',
+    system: 'Parse WhatsApp commands for an email assistant. The user may give MULTIPLE instructions. Return ONLY a valid JSON array of intent objects.\n\nCurrent emails:\n' + emailList + '\n\nRecent conversation:\n' + recentConvo + '\n\nCRITICAL: Only match emails where the name is clearly in sender details. Never guess.\n\nIntents: update | morning_brief | period_update | calendar_today | calendar_tomorrow | reply | send | edit | task | delegate | ignore | unsubscribe | what_sent | mark_read | repeat_item | more_detail | attachment_query | stakeholder_assign | tasks_today | postpone_task | postpone_all_tasks | help | unknown\n\ncalendar_today: asking about today schedule/diary/calendar\ncalendar_tomorrow: asking about tomorrow schedule/diary/agenda/meetings\nperiod_update: last X hours/mins\ntask: adding an email as a Todoist task — e.g. \'task 1\', \'add task 2\', \'create task for email 3\'\ntasks_today: show outstanding tasks due today\npostpone_task: postpone a specific task — add taskIndex (0-based int) and content=new date\npostpone_all_tasks: postpone all tasks — content=new date\n\nEach object: { "intent": "...", "emailIndex": null or 0-based int, "personName": null or string, "delegateTo": null or string, "content": null or string, "minutes": null or int, "useExact": false, "itemReference": null or string, "taskIndex": null or 0-based int }\n\nReturn array even for one intent.',
     messages: [{ role: 'user', content: text }]
   });
 

@@ -135,6 +135,8 @@ async function summariseEmails(emails, stakeholders, accountLabel, vips, rules) 
     ? '\n\nSTAKEHOLDER ASSIGNMENTS:\n' + Object.entries(stakeholders).map(([k,v]) => k + ' -> ' + v).join('\n')
     : '';
 
+  const iwsContext = isIws ? '\n\nIMPORTANT: This is the IWS account (raees@iwsuk.com). ALL emails from real people are work colleagues or business contacts and MUST be shown to Raees. Only filter automated system emails, newsletters, and cold sales outreach.' : '';
+
   const formatPrompt = `Process these emails for Raees${accountLabel ? ' (' + accountLabel + ' inbox)' : ''}.
 
 RULES:

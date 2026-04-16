@@ -297,12 +297,34 @@ async function parseMultiIntent(text, session, conversation) {
   try {
     const raw = msg.content[0].text.trim();
     const m = raw.match(/\[[\s\S]*\]/);
+    let parsed = null;
     if (m) {
-      const parsed = JSON.parse(m[0]);
-      return Array.isArray(parsed) ? parsed : [parsed];
+      parsed = JSON.parse(m[0]);
+      if (!Array.isArray(parsed)) parsed = [parsed];
+    } else {
+      const obj = raw.match(/\{[\s\S]*\}/);
+      parsed = obj ? [JSON.parse(obj[0])] : [{ intent: 'unknown' }];
     }
-    const obj = raw.match(/\{[\s\S]*\}/);
-    return obj ? [JSON.parse(obj[0])] : [{ intent: 'unknown' }];
+
+    // Safety net: fix common misparses
+    // If ALL intents are "send" but have a personName, merge into one compose_email
+    const allSend = parsed.every(p => p.intent === 'send');
+    const anyPersonName = parsed.some(p => p.personName);
+    if (allSend && anyPersonName) {
+      const names = [...new Set(parsed.map(p => p.personName).filter(Boolean))].join(', ');
+      const content = parsed[0].content || text;
+      return [{ intent: 'compose_email', personName: names, content: content, emailIndex: null }];
+    }
+
+    // Fix: single "send" with personName should be compose_email
+    parsed = parsed.map(p => {
+      if (p.intent === 'send' && p.personName) {
+        return { ...p, intent: 'compose_email' };
+      }
+      return p;
+    });
+
+    return parsed;
   } catch { return [{ intent: 'unknown' }]; }
 }
 

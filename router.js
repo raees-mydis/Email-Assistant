@@ -73,14 +73,23 @@ function preFilterIntent(text) {
   // Detect personal calendar request early
   const isPersonalCal = /personal calendar|my personal|outlook calendar/i.test(text);
 
-  // Update existing calendar event — check even if compose was found
-  const isUpdateCal =
+  // Update existing calendar event — must have explicit change/move/reschedule language
+  // "book/schedule/set up/arrange a meeting" are NEW events, not updates
+  const isNewMeeting = /^(can we |could you |please |let's )?(book|schedule|set up|arrange|create|add|organise|organize) (a |an )?(meeting|call|catch.?up|session)/i.test(text);
+
+  const isUpdateCal = !isNewMeeting && (
     /(change|move|update|reschedule|shift|push|propose).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||
     /(meeting|call|mastermind|standup).+(change|move|update|reschedule|propose|to \d+pm|to \d+am)/i.test(text) ||
-    /(propose|suggest).+(time|new time|calendar|event|invite)/i.test(text);
+    /(propose|suggest).+(time|new time|calendar|event|invite)/i.test(text)
+  );
 
   if (isUpdateCal) {
     results.push({ intent: 'update_calendar_event', itemReference: text, content: text });
+  }
+
+  // New meeting/event booking
+  if (isNewMeeting && !isCompose) {
+    results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null });
   }
 
   // Calendar add with personal flag

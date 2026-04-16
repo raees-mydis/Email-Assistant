@@ -309,6 +309,15 @@ async function parseMultiIntent(text, session, conversation) {
     // Safety net: fix common misparses
     const anyPersonName = parsed.some(p => p.personName);
 
+    // Merge multiple compose_email intents into one (e.g. one per person)
+    const multiCompose = parsed.filter(p => p.intent === 'compose_email');
+    if (multiCompose.length > 1) {
+      const allNames = [...new Set(multiCompose.map(p => p.personName).filter(Boolean))].join(', ');
+      const combinedContent = multiCompose.map(p => p.content).filter(Boolean)[0] || text;
+      const nonCompose = parsed.filter(p => p.intent !== 'compose_email');
+      return [{ intent: 'compose_email', personName: allNames, content: combinedContent, emailIndex: null }, ...nonCompose];
+    }
+
     // If ALL intents are "send" or "reply" but have personNames and no emailIndex → compose_email
     const allSendOrReply = parsed.every(p => p.intent === 'send' || (p.intent === 'reply' && !p.emailIndex && p.emailIndex !== 0));
     if (allSendOrReply && anyPersonName) {
@@ -326,7 +335,7 @@ async function parseMultiIntent(text, session, conversation) {
     });
 
     // Fix: "calendar_add" that mentions an existing meeting keyword → update_calendar_event
-    const meetingWords = ['mastermind','standup','meeting','call','invite','existing'];
+    const meetingWords = ['mastermind','standup','meeting','call','invite','existing','propose'];
     parsed = parsed.map(p => {
       if (p.intent === 'calendar_add') {
         const ref = ((p.itemReference || '') + ' ' + (p.content || '')).toLowerCase();
@@ -336,6 +345,15 @@ async function parseMultiIntent(text, session, conversation) {
       }
       return p;
     });
+
+    // Merge multiple compose_email intents into one (e.g. one per person → combined)
+    const composeIntents = parsed.filter(p => p.intent === 'compose_email');
+    if (composeIntents.length > 1) {
+      const allNames = [...new Set(composeIntents.map(p => p.personName).filter(Boolean))].join(', ');
+      const combinedContent = composeIntents.map(p => p.content).filter(Boolean)[0] || text;
+      const merged = { intent: 'compose_email', personName: allNames, content: combinedContent, emailIndex: null };
+      parsed = [merged, ...parsed.filter(p => p.intent !== 'compose_email')];
+    }
 
     return parsed;
   } catch { return [{ intent: 'unknown' }]; }

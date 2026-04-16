@@ -91,6 +91,31 @@ async function handleInbound(text) {
 
   const draft = store.getPendingDraft();
 
+  // Handle organiser decision
+  if (draft && draft.awaitingOrganiserDecision) {
+    const lower = text.toLowerCase().trim();
+    const doEmail = lower.includes('email') || lower.includes('both') || lower.includes('1');
+    const doPropose = lower.includes('propose') || lower.includes('both') || lower.includes('2') || lower.includes('3');
+    store.clearPendingDraft();
+    if (doEmail && draft.organiserEmail) {
+      await graph.sendEmail({
+        to: draft.organiserEmail,
+        subject: 'Request to reschedule: ' + draft.found.subject,
+        body: 'Hi ' + draft.organiserName + ',\n\nCould we please reschedule the ' + draft.found.subject + '? A different time would work better.\n\nKind Regards\nRaees Sayed'
+      });
+      await waSend('Done! ✅ Email sent to ' + draft.organiserName + ' requesting the time change.');
+    }
+    if (doPropose && draft.found && draft.updates) {
+      try {
+        await graph.updateCalendarEvent(draft.found.id, draft.updates, draft.account);
+        return waSend('Done! 📅 Proposed new time on the calendar.');
+      } catch {
+        return waSend('Could not update the calendar directly as you are not the organiser — ' + draft.organiserName + ' will need to accept the change.');
+      }
+    }
+    return;
+  }
+
   // Handle CC decision
   if (draft && draft.awaitingCcDecision) {
     const lower = text.toLowerCase().trim();
@@ -1065,7 +1090,7 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
         } catch (err) {
           console.error('[updateCal] propose error:', err.message);
         }
-        return waSend('Note: ' + organiserName + ' organised "' + found.subject + '" so the invite can only be fully changed by them. I've sent your email asking to move it. 📧');
+        return waSend('Note: ' + organiserName + ' organised the event so the invite can only be fully changed by them. Your email has been sent asking to move it. 📧');
       }
 
       return waSend('You are not the organiser of "' + found.subject + '" — ' + organiserName + ' set it up.\n\nShall I:\n1. Email ' + organiserName + ' to request the time change\n2. Send a tentative proposal through the calendar\n\nSay "email them" or "propose" to proceed.');

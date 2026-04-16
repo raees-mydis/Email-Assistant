@@ -929,6 +929,18 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
       ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
       : '';
     const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
+    // Resolve attendee names to emails using session context + contacts
+    if (eventData.attendees && eventData.attendees.length) {
+      try {
+        const session = store.getSession();
+        const resolved = await graph.resolveAttendees(eventData.attendees, session);
+        eventData.attendees = resolved;
+        console.log('[calendar] resolved attendees:', resolved);
+      } catch (err) {
+        console.error('[calendar] attendee resolution error:', err.message);
+      }
+    }
+
     store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
     store.saveConversationTurn('penelope', confirmMsg);
     return waSend(confirmMsg);

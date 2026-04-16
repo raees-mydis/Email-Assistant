@@ -417,7 +417,77 @@ async function createCalendarEvent(opts, account) {
   }
 }
 
+async function searchContacts(name, account) {
+  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+  try {
+    const data = await graphGet('/users/' + email + '/contacts', {
+      '$search': '"' + name + '"',
+      '$select': 'displayName,emailAddresses',
+      '$top': 5,
+    }, tokenFn);
+    return (data.value || []).map(c => ({
+      name: c.displayName,
+      email: c.emailAddresses && c.emailAddresses.length ? c.emailAddresses[0].address : null,
+    })).filter(c => c.email);
+  } catch (err) {
+    console.error('[graph] searchContacts error:', err.message);
+    return [];
+  }
+}
+
+async function resolveAttendees(names, session) {
+  const resolved = [];
+  const TEAM_MAP = {
+    'hamid': 'hamid@mydis.com', 'falak': 'falak@mydis.com',
+    'lilian': 'lilian@mydis.com', 'craig': 'craig@mydis.com',
+    'adegoke': 'adegoke@mydis.com', 'ade': 'adegoke@mydis.com',
+    'basat': 'basat@mydis.com', 'bas': 'basat@mydis.com',
+    'shams': 'shams@mydis.com', 'al': 'al@iwsuk.com',
+  };
+
+  for (const name of names) {
+    const lower = name.toLowerCase().trim();
+
+    // 1. Check session emails first — most likely context
+    if (session && session.emails) {
+      const found = session.emails.find(e => {
+        const senderName = (e.fromName || '').toLowerCase();
+        return senderName.includes(lower) || lower.includes(senderName.split(' ')[0]);
+      });
+      if (found) {
+        console.log('[attendee] resolved', name, 'from session to', found.from);
+        resolved.push(found.from);
+        continue;
+      }
+    }
+
+    // 2. Check MYDIS internal team
+    if (TEAM_MAP[lower]) {
+      console.log('[attendee] resolved', name, 'from team map to', TEAM_MAP[lower]);
+      resolved.push(TEAM_MAP[lower]);
+      continue;
+    }
+
+    // 3. Search Microsoft contacts
+    try {
+      const contacts = await searchContacts(name, 'mydis');
+      if (contacts.length > 0) {
+        console.log('[attendee] resolved', name, 'from contacts to', contacts[0].email);
+        resolved.push(contacts[0].email);
+        continue;
+      }
+    } catch {}
+
+    // 4. Unresolved — keep name as placeholder
+    console.log('[attendee] could not resolve', name);
+    resolved.push(name + ' (email unknown)');
+  }
+  return resolved;
+}
+
 module.exports = {
+  searchContacts, resolveAttendees,
   getUnreadEmails, getIwsUnreadEmails,
   getRecentEmails, getIwsRecentEmails,
   getThreadTeamReplies, getAttachments,

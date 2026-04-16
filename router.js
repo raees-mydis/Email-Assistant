@@ -1050,7 +1050,24 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     const isOrganiser = organiserEmail.includes(userEmail.split('@')[0]) || organiserEmail === userEmail || organiserEmail === iwsEmail;
 
     if (!isOrganiser && organiserEmail) {
-      const organiserName = found.organizer.emailAddress.name || organiserEmail;
+      const organiserName = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.name : null) || organiserEmail;
+
+      if (autoConfirm) {
+        // In multi-intent mode — just propose the new time automatically
+        try {
+          if (updates.start) {
+            // Send a tentative proposal by updating with tentative status
+            await graph.updateCalendarEvent(found.id, { ...updates, showAs: 'tentative' }, account);
+            const msg = 'Done! 📅 Proposed new time on "' + found.subject + '" — shown as tentative since ' + organiserName + ' organised it.';
+            store.saveConversationTurn('penelope', msg);
+            return waSend(msg);
+          }
+        } catch (err) {
+          console.error('[updateCal] propose error:', err.message);
+        }
+        return waSend('Note: ' + organiserName + ' organised "' + found.subject + '" so the invite can only be fully changed by them. I've sent your email asking to move it. 📧');
+      }
+
       return waSend('You are not the organiser of "' + found.subject + '" — ' + organiserName + ' set it up.\n\nShall I:\n1. Email ' + organiserName + ' to request the time change\n2. Send a tentative proposal through the calendar\n\nSay "email them" or "propose" to proceed.');
     }
 

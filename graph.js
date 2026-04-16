@@ -449,24 +449,26 @@ async function resolveAttendees(names, session) {
   for (const name of names) {
     const lower = name.toLowerCase().trim();
 
-    // 1. Check session emails first — most likely context
+    // 1. MYDIS internal team first — these are always known
+    if (TEAM_MAP[lower]) {
+      console.log('[attendee] resolved', name, 'from team map to', TEAM_MAP[lower]);
+      resolved.push(TEAM_MAP[lower]);
+      continue;
+    }
+
+    // 2. Check session emails — find external contacts by name
     if (session && session.emails) {
+      // Look for external (non-mydis) senders matching the name
       const found = session.emails.find(e => {
         const senderName = (e.fromName || '').toLowerCase();
-        return senderName.includes(lower) || lower.includes(senderName.split(' ')[0]);
+        const isExternal = !e.from.toLowerCase().includes('mydis.com') && !e.from.toLowerCase().includes('iwsuk.com');
+        return isExternal && (senderName.includes(lower) || lower.split(' ').some(w => w.length > 2 && senderName.includes(w)));
       });
       if (found) {
         console.log('[attendee] resolved', name, 'from session to', found.from);
         resolved.push(found.from);
         continue;
       }
-    }
-
-    // 2. Check MYDIS internal team
-    if (TEAM_MAP[lower]) {
-      console.log('[attendee] resolved', name, 'from team map to', TEAM_MAP[lower]);
-      resolved.push(TEAM_MAP[lower]);
-      continue;
     }
 
     // 3. Search Microsoft contacts
@@ -481,7 +483,7 @@ async function resolveAttendees(names, session) {
 
     // 4. Unresolved — keep name as placeholder
     console.log('[attendee] could not resolve', name);
-    resolved.push(name + ' (email unknown)');
+    resolved.push(name + ' (email not found — please add manually)');
   }
   return resolved;
 }

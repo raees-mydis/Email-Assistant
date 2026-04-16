@@ -263,6 +263,13 @@ async function handleInbound(text) {
         store.savePendingDraft({ ...draft, eventData: updated });
         const startStr = new Date(updated.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
         const endStr = new Date(updated.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        // Re-resolve attendees if they changed
+        if (updated.attendees && updated.attendees.length) {
+          try {
+            const session = store.getSession();
+            updated.attendees = await graph.resolveAttendees(updated.attendees, session);
+          } catch {}
+        }
         const attendeeNote = updated.attendees && updated.attendees.length ? '\n👥 Inviting: ' + updated.attendees.join(', ') : '';
         const msg = 'Updated! Here is the revised event:\n\n📅 ' + updated.title + '\n🕐 ' + startStr + ' — ' + endStr + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
         store.saveConversationTurn('penelope', msg);

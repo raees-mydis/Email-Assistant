@@ -36,34 +36,53 @@ const DELEGATES = {
 })();
 
 
-// Pre-filter: catch obvious intents before sending to Claude
-// This prevents the AI from misclassifying common patterns
+// Known people for name extraction
+const KNOWN_PEOPLE = [
+  'hamid','falak','lilian','craig','adegoke','ade','basat','bas','shams',
+  'al','jan','kamran','faz','jane','nadeem','colin','ketan','florin',
+  'gemma','omar','justyna','tom','leigh','jonathan','nick','liv',
+  'emma','lucy','irfan','chris'
+];
+
+function extractPeopleFromText(t) {
+  const found = [];
+  for (const n of KNOWN_PEOPLE) {
+    const re = new RegExp('\\b' + n + '\\b', 'i');
+    if (re.test(t) && !found.includes(n)) found.push(n);
+  }
+  return found.join(', ') || null;
+}
+
+// Pre-filter: catch obvious intents reliably before sending to Claude
 function preFilterIntent(text) {
   const t = text.toLowerCase().trim();
 
-  // Compose email patterns — must match BEFORE checking for "send"
-  const composePatterns = [
-    /^(can we |could you |please )?(email|message|text|send (an )?email to|write to|contact|let .+ know|tell .+ that|ask .+ (if|to|about|whether))/,
-    /^(can you )?(send|write|draft|compose) (an? )?(email|message) to /,
-    /(email|message) (lilian|craig|hamid|falak|adegoke|ade|basat|bas|shams|al|jan|kamran|faz|jane|nadeem|colin|ketan|florin|gemma|omar)/i,
-  ];
-  for (const p of composePatterns) {
-    if (p.test(t)) return 'compose_email';
+  // Compose email — catch all "email/message/ask/tell X" patterns
+  const isCompose =
+    /^(can we|could you|please|can you)\s+(email|message|send|write|ask|tell|let|contact)/i.test(text) ||
+    /^(email|message|write to|send (an )?email to|ask|tell|contact)\s+/i.test(text) ||
+    /(email|message)\s+(lilian|craig|hamid|falak|shams|basat|adegoke|al\b|jan|kamran|faz|jane|nadeem|colin|ketan|florin|gemma|omar)/i.test(text);
+
+  if (isCompose) {
+    const names = extractPeopleFromText(t);
+    return { intent: 'compose_email', personName: names, content: text };
   }
 
-  // Update calendar patterns
-  const updateCalPatterns = [
-    /(change|move|update|reschedule|shift) .*(meeting|call|calendar|invite|event|mastermind|standup)/,
-    /(meeting|call|calendar|invite|event|mastermind|standup).*(change|move|update|reschedule|to \d)/,
-  ];
-  for (const p of updateCalPatterns) {
-    if (p.test(t)) return 'update_calendar_event';
+  // Update existing calendar event
+  const isUpdateCal =
+    /(change|move|update|reschedule|shift|push).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||
+    /(meeting|call|mastermind|standup).+(change|move|update|reschedule|to \d+pm|to \d+am)/i.test(text);
+
+  if (isUpdateCal) {
+    return { intent: 'update_calendar_event', itemReference: text, content: text };
   }
 
-  // "send" ONLY when it's the first word alone
-  if (/^send(\s*$|\s+draft|\s+it|\s+that|\s+this)/.test(t)) return 'send';
+  // "send" ONLY as standalone command
+  if (/^send(\s*$|\s+(it|that|this|draft|the draft))/i.test(t)) {
+    return { intent: 'send' };
+  }
 
-  return null; // let Claude decide
+  return null;
 }
 
 async function handleInbound(text) {

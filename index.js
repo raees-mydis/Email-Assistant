@@ -32,10 +32,17 @@ app.get('/auth/personal/callback', async (req, res) => {
   if (!code) return res.send('No code received');
   try {
     const personalAuth = require('./personal-auth');
-    await personalAuth.exchangeCode(code);
+    const tokens = await personalAuth.exchangeCode(code);
+    const encoded = Buffer.from(JSON.stringify(tokens)).toString('base64');
+    process.env.PERSONAL_TOKEN = encoded;
     const whatsapp = require('./whatsapp');
-    await whatsapp.send('✅ Personal calendar connected! I can now read and add events to your personal Outlook calendar.');
-    res.send('<h2>✅ Personal calendar connected!</h2><p>You can close this tab. Penelope will confirm on WhatsApp.</p>');
+    await whatsapp.send('✅ Personal calendar connected!');
+    res.send(`
+      <h2>✅ Personal calendar connected!</h2>
+      <p>Copy the value below and add it as a Railway environment variable named <strong>PERSONAL_TOKEN</strong>:</p>
+      <textarea rows="4" style="width:100%;font-size:11px;word-break:break-all" onclick="this.select()">${encoded}</textarea>
+      <p>Once added to Railway variables, your personal calendar will work permanently.</p>
+    `);
   } catch (err) {
     console.error('[auth/personal] error:', err.message);
     res.send('Error: ' + err.message);

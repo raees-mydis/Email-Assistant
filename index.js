@@ -20,6 +20,33 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'penelope', time: new Date().toISOString() });
 });
 
+// Personal account OAuth routes
+app.get('/auth/personal', (req, res) => {
+  const personalAuth = require('./personal-auth');
+  res.redirect(personalAuth.getAuthUrl());
+});
+
+app.get('/auth/personal/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.send('Auth error: ' + error);
+  if (!code) return res.send('No code received');
+  try {
+    const personalAuth = require('./personal-auth');
+    await personalAuth.exchangeCode(code);
+    const whatsapp = require('./whatsapp');
+    await whatsapp.send('✅ Personal calendar connected! I can now read and add events to your personal Outlook calendar.');
+    res.send('<h2>✅ Personal calendar connected!</h2><p>You can close this tab. Penelope will confirm on WhatsApp.</p>');
+  } catch (err) {
+    console.error('[auth/personal] error:', err.message);
+    res.send('Error: ' + err.message);
+  }
+});
+
+app.get('/auth/personal/status', (req, res) => {
+  const personalAuth = require('./personal-auth');
+  res.json({ connected: personalAuth.isAuthenticated() });
+});
+
 // Twilio WhatsApp webhook — must return empty TwiML, NOT "OK" text
 app.post('/webhook/whatsapp', async (req, res) => {
   // Return empty TwiML immediately — stops Twilio forwarding "OK" as a WhatsApp message

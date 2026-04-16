@@ -382,25 +382,19 @@ async function createCalendarEvent(opts, account) {
     }));
   }
 
-  // If calendarName specified, find the right calendar
-  let calendarPath = '/users/' + email + '/events';
-  if (opts.calendarName) {
+  // If personal calendar requested, use personal OAuth account
+  if (opts.calendarName && opts.calendarName.toLowerCase().includes('personal')) {
     try {
-      const calendars = await getCalendars(account);
-      console.log('[graph] available calendars:', calendars.map(c => c.name).join(', '));
-      const kw = opts.calendarName.toLowerCase();
-      const match = calendars.find(c =>
-        c.name.toLowerCase().includes(kw) ||
-        (kw.includes('personal') && c.owner && !c.owner.includes('mydis') && !c.owner.includes('iwsuk'))
-      );
-      if (match && match.canEdit) {
-        calendarPath = '/users/' + email + '/calendars/' + match.id + '/events';
-        console.log('[graph] routing to calendar:', match.name);
+      const personalAuth = require('./personal-auth');
+      if (personalAuth.isAuthenticated()) {
+        console.log('[graph] routing to personal calendar via OAuth');
+        return personalAuth.createPersonalCalendarEvent(opts);
       }
     } catch (err) {
-      console.error('[graph] calendar lookup error:', err.message);
+      console.error('[graph] personal calendar error:', err.message);
     }
   }
+  let calendarPath = '/users/' + email + '/events';
 
   console.log('[graph] creating event at:', calendarPath);
   console.log('[graph] event payload:', JSON.stringify({ subject: event.subject, start: event.start, end: event.end }));

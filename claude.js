@@ -154,7 +154,7 @@ Format each email like this (keep it tight):
 ➡️ What needs doing — one sentence
 📎 Attachment: key details if present
 🔴 URGENT / 🟡 SOON / 🟢 LOW
-💡 Recommended: Reply / Delegate to [name] / Task / Ignore / Chase
+💡 Reply / Delegate / Task / Ignore
 
 End with: "Anything you'd like to action? 👆"
 

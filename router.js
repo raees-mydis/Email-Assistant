@@ -462,15 +462,46 @@ async function handleSend() {
 async function handleEdit(newText) {
   const draft = store.getPendingDraft();
   if (!draft) return waSend('No draft to edit - start with "reply to [name]" first 📝');
-  // Save tone example — learn from this edit
-  if (draft.draft && draft.draft !== newText && draft.toAddress) {
+
+  // Detect if this is a style/tone instruction rather than replacement text
+  const stylePatterns = [
+    /^(make it|change it to|rewrite|can you make|more|less|sound|tone|be more|be less|friendlier|softer|shorter|longer|formal|informal|casual|professional|polite|direct|asking|question|ask them|as a question)/i,
+    /^(don.t tell|don.t say|instead of telling|phrase it as|word it as)/i,
+  ];
+  const isStyleInstruction = stylePatterns.some(p => p.test(newText.trim()));
+
+  if (isStyleInstruction && draft.draft) {
+    // Rewrite the existing draft using the instruction
+    await waSend('Rewriting... ✍️');
+    const Anthropic = require('@anthropic-ai/sdk');
+    const config = require('./config');
+    const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+    const travelling = global.PENELOPE_TRAVELLING || false;
+    const signature = travelling
+      ? 'Kind Regards\nRaees Sayed\n(I\'m currently travelling so replies may be slower)'
+      : 'Kind Regards\nRaees Sayed';
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-5', max_tokens: 500,
+      messages: [{ role: 'user', content: 'Rewrite this email following this instruction: "' + newText + '"\n\nKeep the same general topic and recipients. Keep the signature exactly as is.\n\nCurrent draft:\n' + draft.draft + '\n\nSignature to keep: ' + signature + '\n\nReturn only the rewritten email body.' }]
+    });
+    const rewritten = msg.content[0].text.trim();
+    if (draft.draft && draft.toAddress) {
+      store.saveToneExample(draft.toAddress, draft.toName, draft.draft, rewritten, draft.subject);
+    }
+    store.savePendingDraft({ ...draft, draft: rewritten, awaitingReply: false });
+    const confirmMsg = 'Rewritten! ✏️\n\n' + rewritten + '\n\n"send" when you are happy 👍';
+    store.saveConversationTurn('penelope', confirmMsg);
+    return waSend(confirmMsg);
+  }
+
+  // Otherwise treat as literal replacement
+  if (draft.draft && draft.toAddress) {
     store.saveToneExample(draft.toAddress, draft.toName, draft.draft, newText, draft.subject);
-    console.log('[learning] saved tone example for', draft.toAddress);
   }
   store.savePendingDraft({ ...draft, draft: newText, awaitingReply: false });
-  const msg = 'Updated! ✏️\n\n' + newText + '\n\n"send" when you are happy 👍';
-  store.saveConversationTurn('penelope', msg);
-  return waSend(msg);
+  const confirmMsg = 'Updated! ✏️\n\n' + newText + '\n\n"send" when you are happy 👍';
+  store.saveConversationTurn('penelope', confirmMsg);
+  return waSend(confirmMsg);
 }
 
 async function handleTask(emailIndex, personName, sectionHint) {

@@ -486,12 +486,15 @@ async function send(text, skipAdd) {
     hideTyping();
     const reply = data.response || 'Done! ✅';
     addMsg('penelope', reply);
-    setMic('idle');
-    if (cfg.autoread && !cfg.muted) speak(reply);
+    if (cfg.autoread && !cfg.muted) {
+      speak(reply);
+    } else {
+      onPenelopeFinished();
+    }
   } catch (err) {
     hideTyping();
     addMsg('penelope', '😕 Connection issue — check your internet.\n\n' + err.message);
-    setMic('idle');
+    onPenelopeFinished();
   }
 }
 
@@ -622,8 +625,8 @@ function speak(text) {
   u.lang = 'en-GB';
   const v = getBestVoice();
   if (v) u.voice = v;
-  u.onend = () => setMic('idle');
-  u.onerror = () => setMic('idle');
+  u.onend = () => { currentUtterance = null; onPenelopeFinished(); };
+  u.onerror = () => { currentUtterance = null; onPenelopeFinished(); };
   speechSynthesis.speak(u);
 }
 
@@ -638,49 +641,60 @@ document.getElementById('mic-btn').addEventListener('click', () => {
 });
 
 // ── Wake word ─────────────────────────────────────────────────────────────────
-let wakeRec = null, wakeOn = false;
+let wakeRec = null, wakeOn = false, wakeBlocked = false;
 
 function startWake() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR || wakeOn) return;
+  if (!SR || wakeOn || wakeBlocked) return;
   wakeOn = true;
   document.getElementById('wake-btn').classList.add('active');
+  wakeLoop();
+}
 
-  function loop() {
-    if (!wakeOn) return;
-    wakeRec = makeRec(false);
-    if (!wakeRec) return;
-    wakeRec.onresult = ev => {
-      const t = (ev.results[0][0].transcript || '').toLowerCase();
-      if (t.includes('penelope') || t.includes('penelopy')) {
-        setStatus('Woke up! Listening...');
-        // Stop wake word, wait, then start main listening
-        wakeOn = false;
-        if (wakeRec) { try { wakeRec.stop(); } catch {} }
-        setTimeout(() => {
-          startListen();
-          // Re-enable wake word after listening ends
-          const origEnd = rec ? rec.onend : null;
-          if (rec) {
-            rec.onend = (ev) => {
-              if (origEnd) origEnd(ev);
-              setTimeout(() => { wakeOn = false; startWake(); }, 1000);
-            };
-          }
-        }, 600);
-      }
-    };
-    wakeRec.onend = () => { if (wakeOn) setTimeout(loop, 400); };
-    wakeRec.onerror = () => { if (wakeOn) setTimeout(loop, 800); };
-    try { wakeRec.start(); } catch {}
-  }
-  loop();
+function wakeLoop() {
+  if (!wakeOn || wakeBlocked) return;
+  wakeRec = makeRec(false);
+  if (!wakeRec) return;
+
+  wakeRec.onresult = ev => {
+    const t = (ev.results[0][0].transcript || '').toLowerCase();
+    if (t.includes('penelope') || t.includes('penelopy')) {
+      wakeOn = false;
+      wakeBlocked = true;
+      if (wakeRec) { try { wakeRec.abort(); } catch {} wakeRec = null; }
+      setStatus('Hey! Listening... 👂');
+      setTimeout(() => {
+        startListen();
+      }, 500);
+    }
+  };
+
+  wakeRec.onend = () => {
+    if (wakeOn && !wakeBlocked) setTimeout(wakeLoop, 300);
+  };
+
+  wakeRec.onerror = ev => {
+    if (wakeOn && !wakeBlocked && ev.error !== 'aborted') setTimeout(wakeLoop, 800);
+  };
+
+  try { wakeRec.start(); } catch { if (wakeOn && !wakeBlocked) setTimeout(wakeLoop, 1000); }
 }
 
 function stopWake() {
   wakeOn = false;
+  wakeBlocked = false;
   document.getElementById('wake-btn').classList.remove('active');
-  if (wakeRec) { try { wakeRec.stop(); } catch {} wakeRec = null; }
+  if (wakeRec) { try { wakeRec.abort(); } catch {} wakeRec = null; }
+}
+
+// Called after Penelope finishes speaking — re-enables wake word and mic
+function onPenelopeFinished() {
+  wakeBlocked = false;
+  listening = false;
+  setMic('idle');
+  if (cfg.wake) {
+    setTimeout(() => { wakeOn = false; startWake(); }, 600);
+  }
 }
 
 function toggleWake() {

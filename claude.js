@@ -101,6 +101,8 @@ DECISION SUPPORT: End each email item with a recommended action (Reply / Delegat
 DRIVING MODE DEFAULT: Always give short summary first. End with "Want me to action any of these?" If user asks for more detail, expand only that item.`;
 
 async function summariseEmails(emails, stakeholders, accountLabel, vips, rules) {
+  // For IWS account — all contacts are work colleagues, treat differently to MYDIS
+  const isIws = accountLabel === 'IWS';
   if (!emails.length) return 'All clear — nothing needs your attention right now! 🎉';
 
   const prioritised = emails
@@ -111,6 +113,7 @@ async function summariseEmails(emails, stakeholders, accountLabel, vips, rules) 
       return pa - pb;
     });
 
+  console.log('[summarise] ' + accountLabel + ': ' + emails.length + ' total, ' + prioritised.length + ' after filter');
   if (!prioritised.length) return 'All clear — nothing needs your attention right now! 🎉';
 
   const block = prioritised.map((e, i) => {
@@ -159,7 +162,7 @@ STRICT RULE: Never say "I filtered out X emails" or "X emails were spam" or any 
 EMAILS:
 ` + prioritised.map((e,i) => '[' + (i+1) + '] ' + (e.fromName || e.from) + ' | ' + e.subject).join('\n') + '\n\nFULL DETAILS:\n\n' + block;
 
-  return ask(MASTER_SYSTEM + stakeholderContext, formatPrompt, 1500);
+  return ask(MASTER_SYSTEM + stakeholderContext + iwsContext, formatPrompt, 1500);
 }
 
 async function summariseWithContext(emails, minutes, actions, stakeholders) {

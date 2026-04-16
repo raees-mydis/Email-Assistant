@@ -23,6 +23,8 @@ async function runDigest() {
 
     const mydisInbound = mydisEmails.filter(e => !e.from.toLowerCase().includes(userEmail));
     const iwsInbound   = iwsEmails.filter(e => !e.from.toLowerCase().includes('raees@iwsuk.com'));
+    console.log('[digest] MYDIS emails:', mydisInbound.length, '| IWS emails:', iwsInbound.length);
+    if (iwsInbound.length > 0) console.log('[digest] IWS senders:', iwsInbound.slice(0,5).map(e => e.fromName || e.from).join(', '));
 
     // Thread detection for MYDIS emails
     for (const email of mydisInbound) {

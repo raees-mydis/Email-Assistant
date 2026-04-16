@@ -456,18 +456,40 @@ async function resolveAttendees(names, session) {
       continue;
     }
 
-    // 2. Check session emails — find external contacts by name
+    // 2. Check session emails — search all emails including internal by any name part
     if (session && session.emails) {
-      // Look for external (non-mydis) senders matching the name
+      const nameParts = lower.split(' ').filter(w => w.length > 2);
       const found = session.emails.find(e => {
         const senderName = (e.fromName || '').toLowerCase();
-        const isExternal = !e.from.toLowerCase().includes('mydis.com') && !e.from.toLowerCase().includes('iwsuk.com');
-        return isExternal && (senderName.includes(lower) || lower.split(' ').some(w => w.length > 2 && senderName.includes(w)));
+        const senderEmail = e.from.toLowerCase();
+        // Match on any part of their name or email username
+        return senderName.includes(lower) ||
+          nameParts.some(w => senderName.includes(w)) ||
+          nameParts.some(w => senderEmail.split('@')[0].includes(w));
       });
       if (found) {
-        console.log('[attendee] resolved', name, 'from session to', found.from);
+        console.log('[attendee] resolved', name, 'from session emails to', found.from);
         resolved.push(found.from);
         continue;
+      }
+    }
+
+    // 2b. Check conversation history for any mention of this person
+    if (session && session.emails) {
+      // Search in email subjects and previews
+      const found = session.emails.find(e => {
+        const preview = (e.preview || '').toLowerCase();
+        const subject = (e.subject || '').toLowerCase();
+        return lower.split(' ').some(w => w.length > 3 && (preview.includes(w) || subject.includes(w)));
+      });
+      if (found && found.from !== found.to) {
+        // Only use this if the sender seems relevant
+        const senderName = (found.fromName || '').toLowerCase();
+        if (lower.split(' ').some(w => w.length > 3 && senderName.includes(w))) {
+          console.log('[attendee] resolved', name, 'from email content to', found.from);
+          resolved.push(found.from);
+          continue;
+        }
       }
     }
 

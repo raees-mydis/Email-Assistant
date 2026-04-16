@@ -948,9 +948,14 @@ async function handleComposeEmail(recipientNames, topic, originalText, autoSend)
 
   const recipientStr = resolved.map(r => r.name).join(' and ');
 
+  // Capitalise first letter of each name for greeting
+  const greetingNames = resolved.length === 1
+    ? resolved[0].name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    : resolved.map(r => r.name.split(' ')[0].charAt(0).toUpperCase() + r.name.split(' ')[0].slice(1)).join(' and ');
+
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-5', max_tokens: 500,
-    messages: [{ role: 'user', content: 'Draft a professional email from Raees to ' + recipientStr + ' about: ' + (topic || originalText) + '\n\nFormatting rules:\n- Start with "Hi ' + (resolved.length === 1 ? resolved[0].name : resolved.map(r => r.name.split(' ')[0]).join(' and ')) + ',"\n- Blank line after greeting\n- Short clear body\n- Blank line then signature: ' + signature + '\n\nReturn ONLY the email body including signature. No subject line.' }]
+    messages: [{ role: 'user', content: 'Draft a professional email from Raees to ' + recipientStr + ' about: ' + (topic || originalText) + '\n\nFormatting rules:\n- Start with "Hi ' + greetingNames + ',"\n- Blank line after greeting\n- Short clear body\n- Blank line then signature: ' + signature + '\n\nReturn ONLY the email body including signature. No subject line.' }]
   });
 
   const draft = msg.content[0].text.trim();

@@ -307,19 +307,32 @@ async function parseMultiIntent(text, session, conversation) {
     }
 
     // Safety net: fix common misparses
-    // If ALL intents are "send" but have a personName, merge into one compose_email
-    const allSend = parsed.every(p => p.intent === 'send');
     const anyPersonName = parsed.some(p => p.personName);
-    if (allSend && anyPersonName) {
+
+    // If ALL intents are "send" or "reply" but have personNames and no emailIndex → compose_email
+    const allSendOrReply = parsed.every(p => p.intent === 'send' || (p.intent === 'reply' && !p.emailIndex && p.emailIndex !== 0));
+    if (allSendOrReply && anyPersonName) {
       const names = [...new Set(parsed.map(p => p.personName).filter(Boolean))].join(', ');
-      const content = parsed[0].content || text;
+      const content = parsed.map(p => p.content).filter(Boolean)[0] || text;
       return [{ intent: 'compose_email', personName: names, content: content, emailIndex: null }];
     }
 
-    // Fix: single "send" with personName should be compose_email
+    // Fix: any "send" with personName → compose_email
+    // Fix: any "reply" with personName but no emailIndex → compose_email
     parsed = parsed.map(p => {
-      if (p.intent === 'send' && p.personName) {
-        return { ...p, intent: 'compose_email' };
+      if (p.intent === 'send' && p.personName) return { ...p, intent: 'compose_email' };
+      if (p.intent === 'reply' && p.personName && (p.emailIndex === null || p.emailIndex === undefined)) return { ...p, intent: 'compose_email' };
+      return p;
+    });
+
+    // Fix: "calendar_add" that mentions an existing meeting keyword → update_calendar_event
+    const meetingWords = ['mastermind','standup','meeting','call','invite','existing'];
+    parsed = parsed.map(p => {
+      if (p.intent === 'calendar_add') {
+        const ref = ((p.itemReference || '') + ' ' + (p.content || '')).toLowerCase();
+        if (meetingWords.some(w => ref.includes(w))) {
+          return { ...p, intent: 'update_calendar_event', itemReference: p.content };
+        }
       }
       return p;
     });

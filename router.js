@@ -167,7 +167,7 @@ async function handleInbound(text) {
   }
 }
 
-async function processIntent(parsed, intentCount) {
+async function processIntent(parsed, intentCount, text) {
   switch (parsed.intent) {
     case 'update':
       await waSend('Sure Raees, give me a sec... 📬');

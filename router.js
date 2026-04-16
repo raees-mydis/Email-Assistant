@@ -485,9 +485,17 @@ async function handleSend() {
   const sentAt = Date.now();
   if (draft.type === 'new_email') {
     await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
-    store.clearPendingDraft();
     const toNames = draft.recipients.map(r => r.name.charAt(0).toUpperCase() + r.name.slice(1)).join(' and ');
-    const msg = 'Done! ✅ Email sent to ' + toNames;
+    let msg = 'Done! ✅ Email sent to ' + toNames;
+    // If there's a pending calendar action, execute it now
+    const pendingCal = draft.pendingCalendar;
+    store.clearPendingDraft();
+    if (pendingCal) {
+      if (pendingCal.type === 'organiser_decision') {
+        store.savePendingDraft({ ...pendingCal });
+        msg += '\n\nWhat would you like me to do about the calendar?\n📧 "email them" — email ' + pendingCal.organiserName + '\n📅 "propose" — propose the new time\n✅ "both" — do both';
+      }
+    }
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   }
@@ -900,12 +908,7 @@ async function handleComposeEmail(recipientNames, topic, originalText, autoSend)
   });
   const subject = subjectResult.content[0].text.trim().replace(/^subject:\s*/i, '');
   const toLine = resolved.map(r => r.name.charAt(0).toUpperCase() + r.name.slice(1) + ' (' + r.email + ')').join(', ');
-  if (autoSend) {
-    await graph.sendEmail({ to: resolved, subject, body: draft });
-    const msg = 'Done! ✅ Email sent to ' + toLine + '\nSubject: ' + subject;
-    store.saveConversationTurn('penelope', msg);
-    return waSend(msg);
-  }
+  // Always show draft — never auto-send without showing Raees first
   store.savePendingDraft({ type: 'new_email', recipients: resolved, subject, draft, awaitingReply: false, awaitingConfirm: true });
   const confirmMsg = 'Here is your draft:\n\nTo: ' + toLine + '\nSubject: ' + subject + '\n\n' + draft + '\n\n"send" to fire it off\n"edit [changes]" to tweak';
   store.saveConversationTurn('penelope', confirmMsg);
@@ -942,7 +945,12 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     if (!isOrganiser && organiserEmail) {
       const organiserName = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.name : null) || organiserEmail;
       if (autoConfirm) {
-        return waSend('Note: ' + organiserName + ' organised "' + found.subject + '" so they need to accept any calendar changes. Your email has been sent requesting the move. 📧');
+        // Save organiser decision context — will be shown after email draft is confirmed
+        const existingDraft = store.getPendingDraft();
+        if (existingDraft) {
+          store.savePendingDraft({ ...existingDraft, pendingCalendar: { type: 'organiser_decision', organiserName, organiserEmail, found, updates, account, awaitingOrganiserDecision: true } });
+        }
+        return waSend('FYI: ' + organiserName + ' organised "' + found.subject + '" so they will need to accept the change. Say "both" after sending to email them and propose the new time, or I will remind you.');
       }
       // Save context for follow-up
       store.savePendingDraft({ type: 'organiser_decision', organiserName, organiserEmail, found, updates, account, awaitingOrganiserDecision: true });

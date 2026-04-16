@@ -543,9 +543,9 @@ async function handleTasksToday() {
     }
     store.savePendingTasks(tasks);
     const lines = tasks.map((t, i) =>
-      '[T' + (i+1) + '] ' + t.content + (t.due ? ' - due ' + t.due.date : '')
+      '[T' + (i+1) + '] ' + t.content + (t.dueBritish ? ' — ' + t.dueBritish : (t.due ? ' — ' + t.due.date : ''))
     ).join('\n');
-    const msg = '📋 Outstanding tasks (' + tasks.length + '):\n\n' + lines + '\n\nSay "postpone task T2 to Friday", "postpone all to tomorrow", or "postpone all to [date]"';
+    const msg = '📋 Outstanding tasks (' + tasks.length + '):\n\n' + lines + '\n\nSay "postpone T2 to Friday", "postpone the [name] task to [date]", or "postpone all to tomorrow"';
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   } catch (err) {
@@ -592,7 +592,7 @@ async function handlePostponeTask(taskIndex, dueString, itemReference) {
   }
 
   if (!task) {
-    const list = tasks.slice(0, 5).map((t, i) => '[T' + (i+1) + '] ' + t.content).join('\n');
+    const list = tasks.map((t, i) => '[T' + (i+1) + '] ' + t.content).join('\n');
     return waSend('Not sure which task you mean 🔍 Here are your outstanding ones:\n\n' + list + '\n\nSay "postpone T2 to Friday" or "postpone the [keyword] task to [date]"');
   }
 

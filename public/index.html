@@ -139,6 +139,11 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   .pin-key { height: 64px; border-radius: 16px; border: 1.5px solid var(--border); background: var(--surface); font-size: 22px; font-weight: 500; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.1s; -webkit-tap-highlight-color: transparent; user-select: none; }
   .pin-key:active { background: var(--accent-soft); border-color: var(--accent2); transform: scale(0.95); }
   .pin-key.del { font-size: 18px; color: var(--text2); }
+
+  /* Biometric button */
+  #bio-btn { width: 100%; padding: 13px; background: linear-gradient(135deg, #c4baff, #9d8fff); border: none; border-radius: 14px; color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; -webkit-tap-highlight-color: transparent; }
+  #bio-btn:active { opacity: 0.85; }
+  #bio-setup { font-size: 12px; color: var(--text2); text-align: center; cursor: pointer; text-decoration: underline; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -154,6 +159,12 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
       onkeydown="if(event.key==='Enter')checkPin()"
       oninput="document.getElementById('pin-error').textContent=''">
     <button onclick="checkPin()" style="padding:12px 18px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;cursor:pointer">Go</button>
+  </div>
+  <div style="width:260px">
+    <button id="bio-btn" onclick="biometricAuth()" style="display:none">
+      <span>👆</span> Use Fingerprint / Face ID
+    </button>
+    <div id="bio-setup" onclick="setupBiometric()" style="display:none">Set up biometric login</div>
   </div>
 </div>
 
@@ -257,6 +268,82 @@ What would you like to do?</div>
 
 <script>
 
+
+// ── Biometric Auth (WebAuthn) ─────────────────────────────────────────────────
+const BIO_KEY = 'pen_bio_cred';
+const RP_NAME = 'Penelope PA';
+
+function b64ToArray(b64) {
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+function arrayToB64(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+function randomBytes(n) {
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+
+async function setupBiometric() {
+  if (!window.PublicKeyCredential) {
+    alert('Biometric login not supported on this device/browser.');
+    return;
+  }
+  try {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: randomBytes(32),
+        rp: { name: RP_NAME, id: location.hostname },
+        user: { id: randomBytes(16), name: 'raees', displayName: 'Raees' },
+        pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+        timeout: 60000,
+      }
+    });
+    localStorage.setItem(BIO_KEY, arrayToB64(cred.rawId));
+    document.getElementById('bio-btn').style.display = 'flex';
+    document.getElementById('bio-setup').style.display = 'none';
+    document.getElementById('pin-error').style.color = 'var(--success)';
+    document.getElementById('pin-error').textContent = 'Biometric set up! ✅';
+  } catch (err) {
+    document.getElementById('pin-error').textContent = 'Setup failed: ' + err.message;
+  }
+}
+
+async function biometricAuth() {
+  const credId = localStorage.getItem(BIO_KEY);
+  if (!credId) { setupBiometric(); return; }
+  try {
+    const cred = await navigator.credentials.get({
+      publicKey: {
+        challenge: randomBytes(32),
+        allowCredentials: [{ type: 'public-key', id: b64ToArray(credId), transports: ['internal'] }],
+        userVerification: 'required',
+        timeout: 60000,
+      }
+    });
+    if (cred) {
+      document.getElementById('pin-screen').classList.add('hidden');
+      sessionStorage.setItem('pen_auth', '1');
+    }
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') {
+      document.getElementById('pin-error').textContent = 'Biometric failed — try PIN';
+    }
+  }
+}
+
+function initBiometric() {
+  if (!window.PublicKeyCredential) return;
+  const credId = localStorage.getItem(BIO_KEY);
+  if (credId) {
+    document.getElementById('bio-btn').style.display = 'flex';
+    // Auto-trigger biometric on load
+    setTimeout(biometricAuth, 400);
+  } else {
+    document.getElementById('bio-setup').style.display = 'block';
+  }
+}
+
 // PIN lock
 const CORRECT_PIN = 'Ark4d786!';
 
@@ -277,6 +364,7 @@ function initPin() {
   if (sessionStorage.getItem('pen_auth') === '1') {
     document.getElementById('pin-screen').classList.add('hidden');
   } else {
+    initBiometric();
     setTimeout(function() {
       var inp = document.getElementById('pin-input');
       if (inp) inp.focus();
@@ -309,6 +397,19 @@ function setAccent(accent) {
   document.getElementById('accent-us').style.background = accent === 'american' ? 'var(--accent-soft)' : 'var(--surface2)';
   document.getElementById('accent-us').style.color = accent === 'american' ? 'var(--accent)' : 'var(--text2)';
 }
+
+
+// Auto-start listening if launched from home screen (standalone mode)
+window.addEventListener('load', function() {
+  if (window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) {
+    // Launched from home screen — start listening after short delay
+    setTimeout(function() {
+      if (sessionStorage.getItem('pen_auth') === '1') {
+        startListen();
+      }
+    }, 1500);
+  }
+});
 
 // ── Mute ─────────────────────────────────────────────────────────────────────
 function toggleMute() {

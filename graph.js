@@ -336,6 +336,18 @@ async function updateCalendarEvent(eventId, updates, account) {
   return res.data;
 }
 
+async function getCalendars(account) {
+  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+  try {
+    const data = await graphGet('/users/' + email + '/calendars', {}, tokenFn);
+    return (data.value || []).map(c => ({ id: c.id, name: c.name, owner: c.owner ? c.owner.address : null, canEdit: c.canEdit }));
+  } catch (err) {
+    console.error('[graph] getCalendars error:', err.message);
+    return [];
+  }
+}
+
 async function createCalendarEvent(opts, account) {
   const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
   const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
@@ -355,8 +367,28 @@ async function createCalendarEvent(opts, account) {
     }));
   }
 
-  console.log('[graph] creating event:', JSON.stringify(event));
-  const result = await graphPost('/users/' + email + '/events', event, tokenFn);
+  // If calendarName specified, find the right calendar
+  let calendarPath = '/users/' + email + '/events';
+  if (opts.calendarName) {
+    try {
+      const calendars = await getCalendars(account);
+      console.log('[graph] available calendars:', calendars.map(c => c.name).join(', '));
+      const kw = opts.calendarName.toLowerCase();
+      const match = calendars.find(c =>
+        c.name.toLowerCase().includes(kw) ||
+        (kw.includes('personal') && c.owner && !c.owner.includes('mydis') && !c.owner.includes('iwsuk'))
+      );
+      if (match && match.canEdit) {
+        calendarPath = '/users/' + email + '/calendars/' + match.id + '/events';
+        console.log('[graph] routing to calendar:', match.name);
+      }
+    } catch (err) {
+      console.error('[graph] calendar lookup error:', err.message);
+    }
+  }
+
+  console.log('[graph] creating event at:', calendarPath);
+  const result = await graphPost(calendarPath, event, tokenFn);
   console.log('[graph] event created:', result.id, result.subject);
   return result;
 }
@@ -367,6 +399,6 @@ module.exports = {
   getThreadTeamReplies, getAttachments,
   markAsRead, markMultipleAsRead,
   replyToEmail, sendEmail, getSentEmails,
-  getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents, createCalendarEvent, findCalendarEvent, updateCalendarEvent,
+  getCalendars, getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents, createCalendarEvent, findCalendarEvent, updateCalendarEvent,
   TEAM_EMAILS,
 };

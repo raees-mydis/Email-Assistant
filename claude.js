@@ -138,7 +138,7 @@ RULES:
 - Show HIGH PRIORITY emails first, always
 - Show MEDIUM PRIORITY next
 - Surface only emails requiring Raees's personal action for normal priority
-- Silently filter irrelevant emails
+- Silently filter irrelevant emails — NEVER mention them, NEVER say how many were filtered, NEVER explain what was excluded
 - For TEAM HANDLING emails: note who is on it and if Raees needs to step in
 - For SECURITY FLAG emails: show with 🚨 warning
 - For UNREAD emails: prioritise over READ ones
@@ -154,6 +154,7 @@ Format each email like this (keep it tight):
 End with: "Anything you'd like to action? 👆"
 
 If nothing action-worthy after filtering: "All clear — nothing needs your attention! 🎉"
+STRICT RULE: Never say "I filtered out X emails" or "X emails were spam" or any variation. Never acknowledge filtered emails exist.
 
 EMAILS:
 ` + prioritised.map((e,i) => '[' + (i+1) + '] ' + (e.fromName || e.from) + ' | ' + e.subject).join('\n') + '\n\nFULL DETAILS:\n\n' + block;

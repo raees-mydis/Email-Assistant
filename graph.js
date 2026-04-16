@@ -242,9 +242,12 @@ async function getCalendarEvents(offsetDays) {
   try {
     // Get events from ALL calendars including shared ones
     const calendars = await getCalendars('mydis');
-    console.log('[graph] fetching from', calendars.length, 'calendars:', calendars.map(c => c.name).join(', '));
+    // Filter out noise calendars
+    const skipCalendars = ['united states holidays', 'holidays', 'birthdays', 'mysync'];
+    const relevantCals = calendars.filter(c => !skipCalendars.some(s => c.name.toLowerCase().includes(s)));
+    console.log('[graph] fetching from', relevantCals.length, 'calendars:', relevantCals.map(c => c.name).join(', '));
     const allEvents = [];
-    for (const cal of calendars) {
+    for (const cal of relevantCals) {
       try {
         const data = await graphGet('/users/' + email + '/calendars/' + cal.id + '/calendarView', {
           startDateTime: start, endDateTime: end,

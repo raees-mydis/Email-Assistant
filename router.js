@@ -117,7 +117,7 @@ async function handleInbound(text) {
   }
 }
 
-async function processIntent(parsed) {
+async function processIntent(parsed, intentCount) {
   switch (parsed.intent) {
     case 'update':
       await waSend('Sure Raees, give me a sec... 📬');
@@ -177,10 +177,10 @@ async function processIntent(parsed) {
       return handleStakeholderAssign(parsed.content);
 
     case 'compose_email':
-      return handleComposeEmail(parsed.personName, parsed.content, text);
+      return handleComposeEmail(parsed.personName, parsed.content, text, intentCount > 1);
 
     case 'update_calendar_event':
-      return handleUpdateCalendarEvent(parsed.itemReference || parsed.content, parsed.content, text);
+      return handleUpdateCalendarEvent(parsed.itemReference || parsed.content, parsed.content, text, intentCount > 1);
 
     case 'travelling_on':
       global.PENELOPE_TRAVELLING = true;
@@ -846,7 +846,7 @@ async function handleContactPref(personName, prefText) {
   return waSend(msg);
 }
 
-async function handleComposeEmail(recipientNames, topic, originalText) {
+async function handleComposeEmail(recipientNames, topic, originalText, autoSend) {
   if (!recipientNames) return waSend('Who do you want to send this to? Give me a name 👤');
 
   // Resolve recipient names to email addresses from team + session
@@ -912,6 +912,18 @@ async function handleComposeEmail(recipientNames, topic, originalText) {
   });
   const subject = subjectMsg.content[0].text.trim().replace(/^subject:\s*/i, '');
 
+  const toLine = resolved.map(r => r.name + ' (' + r.email + ')').join(', ');
+
+  // In multi-intent mode, auto-send without waiting for confirmation
+  if (autoSend) {
+    for (const r of resolved) {
+      await graph.sendEmail({ to: r.email, subject, body: draft });
+    }
+    const msg = 'Done! ✅ Email sent to ' + toLine + '\nSubject: ' + subject;
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  }
+
   store.savePendingDraft({
     type: 'new_email',
     recipients: resolved,
@@ -921,13 +933,12 @@ async function handleComposeEmail(recipientNames, topic, originalText) {
     awaitingConfirm: true,
   });
 
-  const toLine = resolved.map(r => r.name + ' (' + r.email + ')').join(', ');
   const confirmMsg = 'Here is your draft:\n\nTo: ' + toLine + '\nSubject: ' + subject + '\n\n' + draft + '\n\n"send" to fire it off\n"edit [changes]" to tweak';
   store.saveConversationTurn('penelope', confirmMsg);
   return waSend(confirmMsg);
 }
 
-async function handleUpdateCalendarEvent(eventKeyword, changeDescription, originalText) {
+async function handleUpdateCalendarEvent(eventKeyword, changeDescription, originalText, autoConfirm) {
   if (!eventKeyword) return waSend('Which meeting do you want to update? Give me the name or a keyword 📅');
 
   await waSend('Sure Raees, finding that meeting... 📅');
@@ -944,6 +955,17 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
 
     if (!found) {
       return waSend('Could not find a meeting matching "' + eventKeyword + '" in your calendar 🔍\n\nTry giving me more of the event title.');
+    }
+
+    // Check if Raees is the organiser — if not, we can only propose a new time
+    const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
+    const iwsEmail = 'raees@iwsuk.com';
+    const organiserEmail = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.address : '').toLowerCase();
+    const isOrganiser = organiserEmail.includes(userEmail.split('@')[0]) || organiserEmail === userEmail || organiserEmail === iwsEmail;
+
+    if (!isOrganiser && organiserEmail) {
+      const organiserName = found.organizer.emailAddress.name || organiserEmail;
+      return waSend('You are not the organiser of "' + found.subject + '" — ' + organiserName + ' set it up.\n\nShall I:\n1. Email ' + organiserName + ' to request the time change\n2. Send a tentative proposal through the calendar\n\nSay "email them" or "propose" to proceed.');
     }
 
     // Parse the change using Claude
@@ -976,6 +998,14 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     const newEndStr = (updates.end || currentEnd)
       ? new Date(updates.end || currentEnd).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' })
       : '';
+
+    // In multi-intent mode, auto-confirm the update
+    if (autoConfirm) {
+      await graph.updateCalendarEvent(found.id, updates, account);
+      const msg = 'Done! ✅ "' + found.subject + '" updated to ' + newStartStr + (newEndStr ? ' - ' + newEndStr : '');
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
+    }
 
     store.savePendingDraft({ type: 'calendar_update', eventId: found.id, account, updates, eventTitle: found.subject, awaitingConfirm: true });
 

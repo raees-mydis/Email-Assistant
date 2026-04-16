@@ -290,7 +290,7 @@ async function findCalendarEvent(searchTerm, account, daysAhead) {
     const data = await graphGet('/users/' + email + '/calendarView', {
       startDateTime: start.toISOString(),
       endDateTime: end.toISOString(),
-      '$select': 'id,subject,start,end,location,attendees,bodyPreview,isAllDay',
+      '$select': 'id,subject,start,end,location,attendees,bodyPreview,isAllDay,organizer',
       '$orderby': 'start/dateTime',
       '$top': 50,
     }, tokenFn);

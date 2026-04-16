@@ -207,8 +207,9 @@ async function handleInbound(text) {
       store.saveConversationTurn('penelope', msg);
       return waSend(msg);
     } else if (lower.includes('calendar') || lower.includes('event') || lower.includes('schedule')) {
+      const hint = draft.calendarNameHint || null;
       store.clearPendingDraft();
-      return handleCalendarAdd(draft.originalText);
+      return handleCalendarAdd(draft.originalText, hint, true); // true = skip task check
     }
   }
 
@@ -845,10 +846,11 @@ async function handleDaySummary(offsetDays) {
   }
 }
 
-async function handleCalendarAdd(text, calendarNameHint) {
+async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
   try {
     const conversation = store.getConversation();
-    const tasks = await todoist.getTodayTasks();
+    // Skip task disambiguation if user explicitly wants calendar or personal calendar
+    const tasks = (!skipTaskCheck && !calendarNameHint) ? await todoist.getTodayTasks() : [];
     if (tasks.length > 0) {
       const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
       const textWords = norm(text).split(' ').filter(w => w.length > 2 && !['add','move','put','set','the','for','please','can','you','to','my'].includes(w));
@@ -866,7 +868,7 @@ async function handleCalendarAdd(text, calendarNameHint) {
           return waSend(msg);
         }
         const clarifyMsg = 'Did you mean:\n\n📋 Postpone the task "' + bestTask.content + '" in Todoist\nor\n📅 Add it as a new calendar event?\n\nSay "task" or "calendar"';
-        store.savePendingDraft({ type: 'ambiguous', taskId: bestTask.id, taskContent: bestTask.content, originalText: text, awaitingClarify: true });
+        store.savePendingDraft({ type: 'ambiguous', taskId: bestTask.id, taskContent: bestTask.content, originalText: text, calendarNameHint: calendarNameHint || null, awaitingClarify: true });
         return waSend(clarifyMsg);
       }
     }

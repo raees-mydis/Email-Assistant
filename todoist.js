@@ -75,19 +75,34 @@ async function createTask(opts) {
   return res.data;
 }
 
+async function fetchAllTasks() {
+  const res = await axios.get(BASE + '/tasks', {
+    headers: { Authorization: 'Bearer ' + config.todoist.token },
+    params: { project_id: config.todoist.projectId }
+  });
+  // API v1 wraps in {results:[...]}, v2 returned plain array
+  const raw = res.data;
+  if (Array.isArray(raw)) return raw;
+  if (raw && Array.isArray(raw.results)) return raw.results;
+  if (raw && Array.isArray(raw.items)) return raw.items;
+  // Last resort — look for any array property
+  const arrKey = Object.keys(raw || {}).find(k => Array.isArray(raw[k]));
+  if (arrKey) return raw[arrKey];
+  console.warn('[todoist] unexpected response shape:', JSON.stringify(raw).slice(0, 200));
+  return [];
+}
+
 async function getTodayTasks() {
   try {
-    const res = await axios.get(BASE + '/tasks', {
-      headers: { Authorization: 'Bearer ' + config.todoist.token },
-      params: { project_id: config.todoist.projectId }
-    });
-    const all = res.data || [];
+    const all = await fetchAllTasks();
+    console.log('[todoist] total tasks fetched:', all.length);
     const today = new Date().toISOString().split('T')[0];
-    return all.filter(t => {
+    const due = all.filter(t => {
       if (!t.due) return false;
-      const dueDate = t.due.date;
-      return dueDate <= today;
+      return t.due.date <= today;
     });
+    console.log('[todoist] tasks due today:', due.length, due.map(t => t.content).join(', '));
+    return due;
   } catch (err) {
     console.error('[todoist] getTodayTasks error:', err.message);
     return [];
@@ -117,13 +132,8 @@ async function postponeAllTasks(tasks, dueString) {
 }
 
 async function getTasksForDate(dateStr) {
-  // dateStr format: YYYY-MM-DD
   try {
-    const res = await axios.get(BASE + '/tasks', {
-      headers: { Authorization: 'Bearer ' + config.todoist.token },
-      params: { project_id: config.todoist.projectId }
-    });
-    const all = Array.isArray(res.data) ? res.data : (res.data.results || res.data.items || []);
+    const all = await fetchAllTasks();
     return all.filter(t => t.due && t.due.date === dateStr);
   } catch (err) {
     console.error('[todoist] getTasksForDate error:', err.message);

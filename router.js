@@ -96,24 +96,33 @@ async function handleInbound(text) {
     const lower = text.toLowerCase().trim();
     const doEmail = lower.includes('email') || lower.includes('both') || lower.includes('1');
     const doPropose = lower.includes('propose') || lower.includes('both') || lower.includes('2') || lower.includes('3');
-    store.clearPendingDraft();
-    if (doEmail && draft.organiserEmail) {
-      await graph.sendEmail({
-        to: draft.organiserEmail,
-        subject: 'Request to reschedule: ' + draft.found.subject,
-        body: 'Hi ' + draft.organiserName + ',\n\nCould we please reschedule the ' + draft.found.subject + '? A different time would work better.\n\nKind Regards\nRaees Sayed'
-      });
-      await waSend('Done! ✅ Email sent to ' + draft.organiserName + ' requesting the time change.');
-    }
-    if (doPropose && draft.found && draft.updates) {
-      try {
-        await graph.updateCalendarEvent(draft.found.id, draft.updates, draft.account);
-        return waSend('Done! 📅 Proposed new time on the calendar.');
-      } catch {
-        return waSend('Could not update the calendar directly as you are not the organiser — ' + draft.organiserName + ' will need to accept the change.');
+
+    if (!doEmail && !doPropose) {
+      // They might be sending the email draft — let it fall through but keep organiser context
+      // Don't clear the organiser decision yet
+    } else {
+      store.clearPendingDraft();
+      const msgs = [];
+      if (doEmail && draft.organiserEmail) {
+        await graph.sendEmail({
+          to: draft.organiserEmail,
+          subject: 'Request to reschedule: ' + draft.found.subject,
+          body: 'Hi ' + draft.organiserName + ',\n\nCould we please reschedule the ' + draft.found.subject + '? A different time would work better.\n\nKind Regards\nRaees Sayed'
+        });
+        msgs.push('Email sent to ' + draft.organiserName);
       }
+      if (doPropose && draft.found && draft.updates) {
+        try {
+          await graph.updateCalendarEvent(draft.found.id, draft.updates, draft.account);
+          msgs.push('New time proposed on the calendar');
+        } catch {
+          msgs.push('Note: ' + draft.organiserName + ' is the organiser so they\'ll need to accept the calendar change');
+        }
+      }
+      const doneMsg = 'Done! ✅ ' + msgs.join(' & ') + '.';
+      store.saveConversationTurn('penelope', doneMsg);
+      return waSend(doneMsg);
     }
-    return;
   }
 
   // Handle CC decision
@@ -313,7 +322,16 @@ async function processIntent(parsed, intentCount, text) {
       store.saveConversationTurn('penelope', helpMsg);
       return waSend(helpMsg);
 
-    default:
+    case 'propose':
+    case 'unknown':
+      // Check if user is following up on an organiser decision
+      if (text.toLowerCase().includes('propose') || text.toLowerCase().includes('suggest')) {
+        const recentConvo = store.getConversation();
+        const lastPenelopeMsg = recentConvo.filter(c => c.role === 'penelope').pop();
+        if (lastPenelopeMsg && lastPenelopeMsg.text && lastPenelopeMsg.text.includes('not the organiser')) {
+          return waSend('I\'ve lost the meeting context — please say "update the mastermind calendar" again and I\'ll handle it from there. 📅');
+        }
+      }
       const reply = 'Hmm, not quite sure what you mean 🤔 Say "help" for the full list!';
       store.saveConversationTurn('penelope', reply);
       return waSend(reply);

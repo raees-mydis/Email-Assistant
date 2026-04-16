@@ -104,6 +104,37 @@ async function handleInbound(text) {
 
   const draft = store.getPendingDraft();
 
+  // Handle combined email+calendar action
+  if (draft && draft.awaitingCombinedAction && draft.pendingCalendar) {
+    const lower = text.toLowerCase().trim();
+    const doSend = lower === 'send' || lower.includes('send only') || lower.includes('email only');
+    const doPropose = lower === 'propose' || lower.includes('propose only') || lower.includes('calendar only');
+    const doBoth = lower === 'both' || lower.includes('do both') || lower.includes('send and propose');
+
+    if (doSend || doPropose || doBoth) {
+      const cal = draft.pendingCalendar;
+      const toNames = draft.recipients.map(r => r.name.charAt(0).toUpperCase() + r.name.slice(1)).join(' and ');
+      const msgs = [];
+      if (doSend || doBoth) {
+        await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
+        msgs.push('Email sent to ' + toNames);
+      }
+      if (doPropose || doBoth) {
+        try {
+          await graph.updateCalendarEvent(cal.found.id, cal.updates, cal.account);
+          msgs.push('New time proposed on the calendar');
+        } catch {
+          msgs.push('Note: ' + cal.organiserName + ' is the organiser — they need to accept the calendar change');
+        }
+      }
+      store.clearPendingDraft();
+      const doneMsg = 'Done! ✅ ' + msgs.join(' & ') + '.';
+      store.saveConversationTurn('penelope', doneMsg);
+      return waSend(doneMsg);
+    }
+    // "edit" falls through to handleEdit
+  }
+
   // Handle organiser decision
   if (draft && draft.awaitingOrganiserDecision) {
     const lower = text.toLowerCase().trim();
@@ -484,18 +515,18 @@ async function handleSend() {
   if (!draft.draft) return waSend('The draft is empty — say "edit [your reply]" first 📝');
   const sentAt = Date.now();
   if (draft.type === 'new_email') {
-    await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
     const toNames = draft.recipients.map(r => r.name.charAt(0).toUpperCase() + r.name.slice(1)).join(' and ');
-    let msg = 'Done! ✅ Email sent to ' + toNames;
-    // If there's a pending calendar action, execute it now
-    const pendingCal = draft.pendingCalendar;
-    store.clearPendingDraft();
-    if (pendingCal) {
-      if (pendingCal.type === 'organiser_decision') {
-        store.savePendingDraft({ ...pendingCal });
-        msg += '\n\nWhat would you like me to do about the calendar?\n📧 "email them" — email ' + pendingCal.organiserName + '\n📅 "propose" — propose the new time\n✅ "both" — do both';
-      }
+    // Handle combined action (email + calendar)
+    if (draft.awaitingCombinedAction && draft.pendingCalendar) {
+      await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
+      store.clearPendingDraft();
+      const msg = 'Done! ✅ Email sent to ' + toNames + '.';
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
     }
+    await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
+    store.clearPendingDraft();
+    const msg = 'Done! ✅ Email sent to ' + toNames;
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   }
@@ -912,6 +943,9 @@ async function handleComposeEmail(recipientNames, topic, originalText, autoSend)
   store.savePendingDraft({ type: 'new_email', recipients: resolved, subject, draft, awaitingReply: false, awaitingConfirm: true });
   const confirmMsg = 'Here is your draft:\n\nTo: ' + toLine + '\nSubject: ' + subject + '\n\n' + draft + '\n\n"send" to fire it off\n"edit [changes]" to tweak';
   store.saveConversationTurn('penelope', confirmMsg);
+  // Store the draft key so calendar handler can reference it
+  const savedDraft = store.getPendingDraft();
+  if (savedDraft) store.savePendingDraft({ ...savedDraft, _toLine: toLine, _subject: subject });
   return waSend(confirmMsg);
 }
 
@@ -945,12 +979,25 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     if (!isOrganiser && organiserEmail) {
       const organiserName = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.name : null) || organiserEmail;
       if (autoConfirm) {
-        // Save organiser decision context — will be shown after email draft is confirmed
+        // Attach calendar context to the pending email draft and show combined prompt
         const existingDraft = store.getPendingDraft();
         if (existingDraft) {
-          store.savePendingDraft({ ...existingDraft, pendingCalendar: { type: 'organiser_decision', organiserName, organiserEmail, found, updates, account, awaitingOrganiserDecision: true } });
+          store.savePendingDraft({
+            ...existingDraft,
+            pendingCalendar: { organiserName, organiserEmail, found, updates, account },
+            awaitingCombinedAction: true,
+          });
+          const calNote = '\n\n📅 Calendar: "' + found.subject + '" is organised by ' + organiserName + ' — they will need to accept the change.\n\n' +
+            'What would you like to do?\n' +
+            '📧 "send" — send the email only\n' +
+            '📅 "propose" — propose the new time on the calendar only\n' +
+            '✅ "both" — send the email AND propose the new time';
+          const currentDraft = store.getPendingDraft();
+          const updatedMsg = currentDraft._lastMsg ? currentDraft._lastMsg + calNote : calNote;
+          store.savePendingDraft({ ...store.getPendingDraft(), _calNote: calNote });
+          return waSend(calNote);
         }
-        return waSend('FYI: ' + organiserName + ' organised "' + found.subject + '" so they will need to accept the change. Say "both" after sending to email them and propose the new time, or I will remind you.');
+        return waSend('FYI: ' + organiserName + ' organised "' + found.subject + '" — they need to accept the change.');
       }
       // Save context for follow-up
       store.savePendingDraft({ type: 'organiser_decision', organiserName, organiserEmail, found, updates, account, awaitingOrganiserDecision: true });

@@ -52,6 +52,23 @@ async function handleInbound(text) {
     return handleReplyContent(text, { ...draft, replyAll: true });
   }
 
+  // Handle task vs calendar ambiguity
+  if (draft && draft.awaitingClarify && draft.type === 'ambiguous') {
+    const lower = text.toLowerCase().trim();
+    if (lower.includes('task') || lower.includes('todoist') || lower.includes('postpone') || lower.includes('move')) {
+      store.clearPendingDraft();
+      const dateMatch = draft.originalText.match(/to (tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next \w+)/i);
+      const newDate = dateMatch ? dateMatch[1] : 'tomorrow';
+      await todoist.updateTaskDue(draft.taskId, newDate);
+      const msg = 'Done! ✅ "' + draft.taskContent + '" moved to ' + newDate;
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
+    } else if (lower.includes('calendar') || lower.includes('event') || lower.includes('schedule')) {
+      store.clearPendingDraft();
+      return handleCalendarAdd(draft.originalText);
+    }
+  }
+
   if (draft && draft.awaitingConfirm && draft.type === 'calendar_event') {
     const lower = text.toLowerCase().trim();
     if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
@@ -571,24 +588,35 @@ async function handlePostponeTask(taskIndex, dueString, itemReference) {
     task = tasks[taskIndex] || null;
   }
 
-  // Try keyword match if no index or index failed
+  // Try keyword match — strip special chars for comparison
   if (!task && itemReference) {
-    const kw = itemReference.toLowerCase();
-    task = tasks.find(t => t.content.toLowerCase().includes(kw)) || null;
+    const normalize = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const kw = normalize(itemReference);
+    const kwWords = kw.split(' ').filter(w => w.length > 2);
+    // Score each task by how many keywords match
+    let bestScore = 0, bestTask = null;
+    for (const t of tasks) {
+      const taskNorm = normalize(t.content);
+      const matchCount = kwWords.filter(w => taskNorm.includes(w)).length;
+      if (matchCount > bestScore) { bestScore = matchCount; bestTask = t; }
+    }
+    if (bestScore > 0) task = bestTask;
   }
 
-  // If still no match, ask Claude to figure out which task from context
+  // Still no match — ask Claude
   if (!task && itemReference) {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const config = require('./config');
-    const client = new Anthropic({ apiKey: config.anthropic.apiKey });
-    const taskList = tasks.map((t, i) => '[' + i + '] ' + t.content).join('\n');
-    const msg = await client.messages.create({
-      model: 'claude-sonnet-4-5', max_tokens: 50,
-      messages: [{ role: 'user', content: 'Tasks:\n' + taskList + '\n\nUser said: "' + itemReference + '"\nReturn ONLY the 0-based index of the matching task, or -1 if no match.' }]
-    });
-    const idx = parseInt(msg.content[0].text.trim(), 10);
-    if (idx >= 0 && tasks[idx]) task = tasks[idx];
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const config = require('./config');
+      const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+      const taskList = tasks.map((t, i) => '[' + i + '] ' + t.content).join('\n');
+      const msg = await client.messages.create({
+        model: 'claude-sonnet-4-5', max_tokens: 50,
+        messages: [{ role: 'user', content: 'Tasks:\n' + taskList + '\n\nUser said: "' + itemReference + '"\nReturn ONLY the 0-based index of the closest matching task, or -1 if no match.' }]
+      });
+      const idx = parseInt(msg.content[0].text.trim(), 10);
+      if (idx >= 0 && tasks[idx]) task = tasks[idx];
+    } catch {}
   }
 
   if (!task) {
@@ -648,6 +676,38 @@ async function handleDaySummary(offsetDays) {
 async function handleCalendarAdd(text) {
   try {
     const conversation = store.getConversation();
+
+    // Check if this might be a task postpone first
+    const tasks = await todoist.getTodayTasks();
+    if (tasks.length > 0) {
+      const normalize = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+      const textNorm = normalize(text);
+      const textWords = textNorm.split(' ').filter(w => w.length > 2 && !['add','move','put','set','the','for','please','can','you','to','my'].includes(w));
+      let bestScore = 0, bestTask = null;
+      for (const t of tasks) {
+        const taskNorm = normalize(t.content);
+        const matchCount = textWords.filter(w => taskNorm.includes(w)).length;
+        if (matchCount > bestScore) { bestScore = matchCount; bestTask = t; }
+      }
+      if (bestScore >= 2 || (bestScore === 1 && textWords.length <= 3)) {
+        // Looks like a task reference — ask for clarification
+        const dateMatch = text.match(/to (tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next \w+|\d+ \w+)/i);
+        const newDate = dateMatch ? dateMatch[1] : null;
+        if (newDate) {
+          // High confidence — just do it as task postpone
+          await todoist.updateTaskDue(bestTask.id, newDate);
+          const msg = 'Done! ✅ "' + bestTask.content + '" moved to ' + newDate;
+          store.saveConversationTurn('penelope', msg);
+          return waSend(msg);
+        }
+        // Ask to clarify
+        const clarifyMsg = 'Did you mean:\n\n📋 Postpone the task "' + bestTask.content + '" in Todoist\nor\n📅 Add "' + bestTask.content + '" as a new calendar event?\n\nSay "task" or "calendar"';
+        store.savePendingDraft({ type: 'ambiguous', taskId: bestTask.id, taskContent: bestTask.content, originalText: text, awaitingClarify: true });
+        store.saveConversationTurn('penelope', clarifyMsg);
+        return waSend(clarifyMsg);
+      }
+    }
+
     const eventData = await claude.parseCalendarEvent(text, conversation);
 
     if (!eventData || !eventData.title || !eventData.start) {

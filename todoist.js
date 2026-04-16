@@ -105,7 +105,9 @@ async function getTodayTasks() {
     const today = new Date().toISOString().split('T')[0];
     const due = all.filter(t => {
       if (!t.due) return false;
-      return t.due.date <= today;
+      // Handle both date-only ("2026-04-16") and datetime ("2026-04-16T10:00:00") formats
+      const dueDate = t.due.date.split('T')[0];
+      return dueDate <= today;
     });
     console.log('[todoist] tasks due today:', due.length, due.map(t => t.content).join(', '));
     // Add British formatted date to each task

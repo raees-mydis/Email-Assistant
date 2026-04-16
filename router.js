@@ -945,13 +945,22 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
       ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
       : '';
     const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
-    // Resolve attendee names to emails using session context + contacts
+    // Resolve attendee names to emails BEFORE showing confirmation
     if (eventData.attendees && eventData.attendees.length) {
       try {
         const session = store.getSession();
         const resolved = await graph.resolveAttendees(eventData.attendees, session);
         eventData.attendees = resolved;
         console.log('[calendar] resolved attendees:', resolved);
+        // Rebuild attendeeNote with resolved emails
+        const resolvedNote = resolved.length ? '\n👥 Inviting: ' + resolved.join(', ') : '';
+        // Re-build confirmMsg with resolved attendees
+        const loc2 = eventData.location ? '\n📍 ' + eventData.location : '';
+        const acct2 = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
+        const confirmMsg2 = 'Adding to your calendar' + acct2 + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc2 + resolvedNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
+        store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
+        store.saveConversationTurn('penelope', confirmMsg2);
+        return waSend(confirmMsg2);
       } catch (err) {
         console.error('[calendar] attendee resolution error:', err.message);
       }

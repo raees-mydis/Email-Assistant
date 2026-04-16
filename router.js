@@ -33,6 +33,25 @@ async function handleInbound(text) {
   store.saveConversationTurn('user', text);
 
   const draft = store.getPendingDraft();
+
+  // Handle CC decision
+  if (draft && draft.awaitingCcDecision) {
+    const lower = text.toLowerCase().trim();
+    const keepCc = lower.includes('keep') || lower.includes('all') || lower.includes('yes');
+    const onlyTo = lower.includes('only') || lower.includes('just') || lower.includes('no');
+    if (keepCc || onlyTo) {
+      store.savePendingDraft({ ...draft, replyAll: keepCc, awaitingCcDecision: false, awaitingReply: true });
+      const msg = keepCc
+        ? 'Got it — replying to all 👥\n\nWhat would you like to say?'
+        : 'Got it — replying to ' + draft.toName + ' only 👤\n\nWhat would you like to say?';
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
+    }
+    // They typed their reply directly without deciding — default to reply-all
+    store.savePendingDraft({ ...draft, replyAll: true, awaitingCcDecision: false, awaitingReply: false });
+    return handleReplyContent(text, { ...draft, replyAll: true });
+  }
+
   if (draft && draft.awaitingConfirm && draft.type === 'calendar_event') {
     const lower = text.toLowerCase().trim();
     if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
@@ -250,13 +269,37 @@ async function handleReply(emailIndex, content, personName, useExact) {
     if (personName) return waSend('I could not find an email from "' + personName + '" in the current digest 🔍\n\nTry "update" to refresh.');
     return waSend('Which email did you want to reply to? Give me a name or number 📬');
   }
-  store.savePendingDraft({ messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject, draft: '', awaitingReply: true, useExact: useExact || false });
+
+  const cc = email.ccRecipients || [];
+  const draftBase = {
+    messageId: email.id,
+    toAddress: email.from,
+    toName: email.fromName || email.from,
+    subject: email.subject,
+    account: email.account || 'mydis',
+    draft: '',
+    awaitingReply: true,
+    useExact: useExact || false,
+    replyAll: cc.length > 0, // default to reply-all if there are CC recipients
+    ccRecipients: cc,
+  };
+
+  // If there are CC recipients, ask first
+  if (cc.length > 0 && !content) {
+    const ccNames = cc.map(r => r.name || r.email).join(', ');
+    store.savePendingDraft({ ...draftBase, awaitingReply: false, awaitingCcDecision: true });
+    const msg = 'Replying to ' + (email.fromName || email.from) + ' re: ' + email.subject + '\n\n👥 CC: ' + ccNames + '\n\nKeep them in CC or reply to ' + (email.fromName || email.from.split('@')[0]) + ' only?\n\n"keep" — reply all\n"only" — reply to sender only\n\nThen tell me what to say.';
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  }
+
+  store.savePendingDraft(draftBase);
   if (!content) {
     const msg = 'Sure! ✉️ Replying to ' + (email.fromName || email.from) + '\nRe: ' + email.subject + '\n\nWhat would you like to say?';
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   }
-  return handleReplyContent(content, { messageId: email.id, toAddress: email.from, toName: email.fromName || email.from, subject: email.subject, useExact: useExact || false });
+  return handleReplyContent(content, draftBase);
 }
 
 async function handleReplyContent(content, draftInfo) {
@@ -266,7 +309,10 @@ async function handleReplyContent(content, draftInfo) {
   const email = session ? session.emails.find(e => e.id === draftInfo.messageId) : null;
   const polished = email ? await claude.reviewReply(email, content, useExact) : content;
   store.savePendingDraft({ ...draftInfo, draft: polished, awaitingReply: false });
-  const msg = 'Here is your draft to ' + draftInfo.toName + ':\n\n' + polished + '\n\n"send" to fire it off\n"edit [changes]" to tweak\n"use my exact words" to send as-is';
+  const ccNote = draftInfo.replyAll && draftInfo.ccRecipients && draftInfo.ccRecipients.length
+    ? '\n👥 CC: ' + draftInfo.ccRecipients.map(r => r.name || r.email).join(', ')
+    : '';
+  const msg = 'Here is your draft to ' + draftInfo.toName + ccNote + ':\n\n' + polished + '\n\n"send" to fire it off\n"edit [changes]" to tweak\n"only" to remove CC recipients';
   store.saveConversationTurn('penelope', msg);
   return waSend(msg);
 }
@@ -275,7 +321,7 @@ async function handleSend() {
   const draft = store.getPendingDraft();
   if (!draft) return waSend('Nothing waiting to be sent! Start with "reply to [name]" 📝');
   if (!draft.draft) return waSend('The draft is empty - say "edit [your reply]" first 📝');
-  await graph.replyToEmail(draft.messageId, draft.draft);
+  await graph.replyToEmail(draft.messageId, draft.draft, draft.account, draft.replyAll !== false);
   store.setEmailAction(draft.messageId, 'replied', 'to ' + draft.toName);
   store.removeChaseItem(draft.messageId);
   store.clearPendingDraft();

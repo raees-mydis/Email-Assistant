@@ -55,6 +55,14 @@ async function graphPatch(path, body, tokenFn) {
 }
 
 function mapMessage(m, account) {
+  const cc = (m.ccRecipients || []).map(r => ({
+    name: r.emailAddress ? r.emailAddress.name : '',
+    email: r.emailAddress ? r.emailAddress.address : '',
+  })).filter(r => r.email);
+  const toRecipients = (m.toRecipients || []).map(r => ({
+    name: r.emailAddress ? r.emailAddress.name : '',
+    email: r.emailAddress ? r.emailAddress.address : '',
+  })).filter(r => r.email);
   return {
     id: m.id,
     subject: m.subject || '(no subject)',
@@ -67,6 +75,8 @@ function mapMessage(m, account) {
     conversationId: m.conversationId || '',
     isRead: m.isRead || false,
     account: account || 'mydis',
+    ccRecipients: cc,
+    toRecipients: toRecipients,
   };
 }
 
@@ -74,7 +84,7 @@ async function getUnreadEmails(max) {
   const email = config.azure.userEmail;
   const data = await graphGet('/users/' + email + '/messages', {
     '$filter': 'isRead eq false',
-    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
+    '$select': 'id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
     '$orderby': 'receivedDateTime DESC',
     '$top': max || 40,
   }, getMydisToken);
@@ -86,7 +96,7 @@ async function getIwsUnreadEmails(max) {
   try {
     const data = await graphGet('/users/' + email + '/messages', {
       '$filter': 'isRead eq false',
-      '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
+      '$select': 'id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
       '$orderby': 'receivedDateTime DESC',
       '$top': max || 40,
     }, getIwsToken);
@@ -102,7 +112,7 @@ async function getRecentEmails(minutesBack) {
   const since = new Date(Date.now() - minutesBack * 60 * 1000).toISOString();
   const data = await graphGet('/users/' + email + '/messages', {
     '$filter': "receivedDateTime ge " + since,
-    '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
+    '$select': 'id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
     '$orderby': 'receivedDateTime DESC',
     '$top': 50,
   }, getMydisToken);
@@ -115,7 +125,7 @@ async function getIwsRecentEmails(minutesBack) {
   try {
     const data = await graphGet('/users/' + email + '/messages', {
       '$filter': "receivedDateTime ge " + since,
-      '$select': 'id,subject,from,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
+      '$select': 'id,subject,from,toRecipients,ccRecipients,bodyPreview,receivedDateTime,importance,hasAttachments,conversationId,isRead',
       '$orderby': 'receivedDateTime DESC',
       '$top': 50,
     }, getIwsToken);

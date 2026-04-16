@@ -322,15 +322,20 @@ async function findCalendarEvent(searchTerm, account, daysAhead) {
       '$top': 50,
     }, tokenFn);
     const events = (data.value || []);
-    const kw = searchTerm.toLowerCase();
-    // Score by keyword match
+    const kw = searchTerm.toLowerCase().trim();
+    const words = kw.split(/\s+/).filter(w => w.length > 2);
+    // Score by keyword match — weight exact phrase match highly
     const scored = events.map(e => {
       const subj = (e.subject || '').toLowerCase();
-      const words = kw.split(/\s+/).filter(w => w.length > 2);
-      const score = words.filter(w => subj.includes(w)).length;
+      let score = 0;
+      // Exact phrase match scores highest
+      if (subj.includes(kw)) score += 10;
+      // Individual word matches
+      score += words.filter(w => subj.includes(w)).length * 2;
       return { event: e, score };
     }).filter(e => e.score > 0);
     scored.sort((a, b) => b.score - a.score);
+    console.log('[calendar search] term:', kw, '| top match:', scored[0] ? scored[0].event.subject + ' (score:' + scored[0].score + ')' : 'none');
     return scored.length > 0 ? scored[0].event : null;
   } catch (err) {
     console.error('[graph] findCalendarEvent error:', err.message);

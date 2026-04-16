@@ -1115,7 +1115,9 @@ async function handleCalendarSearch(keyword) {
       month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
     const endStr = end ? new Date(end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : '';
-    const loc = found.location ? (found.location.displayName || found.location) : null;
+    const loc = found.location
+      ? (typeof found.location === 'string' ? found.location : found.location.displayName || null)
+      : null;
     const acct = found.account === 'iws' ? ' [IWS]' : '';
     const msg = '📅 Found it!' + acct + '\n\n' + (found.subject || searchTerm) +
       '\n🗓 ' + dateStr + (endStr ? ' — ' + endStr : '') +

@@ -438,6 +438,12 @@ async function searchContacts(name, account) {
 
 async function resolveAttendees(names, session) {
   const resolved = [];
+  
+  // Load persisted contact cache
+  const store = require('./store');
+  const vips = store.getVips();
+  const contactPrefs = store.getAllContactPrefs();
+  
   const TEAM_MAP = {
     'hamid': 'hamid@mydis.com', 'falak': 'falak@mydis.com',
     'lilian': 'lilian@mydis.com', 'craig': 'craig@mydis.com',
@@ -493,7 +499,28 @@ async function resolveAttendees(names, session) {
       }
     }
 
-    // 3. Search Microsoft contacts
+    // 3. Check VIP contacts (persistent memory)
+    const vipMatch = Object.values(vips || {}).find(v => {
+      const vipName = (v.name || '').toLowerCase();
+      return vipName.includes(lower) || lower.split(' ').some(w => w.length > 2 && vipName.includes(w));
+    });
+    if (vipMatch && vipMatch.email) {
+      console.log('[attendee] resolved', name, 'from VIPs to', vipMatch.email);
+      resolved.push(vipMatch.email);
+      continue;
+    }
+
+    // 4. Check contact prefs (people Raees has interacted with before)
+    const prefMatch = Object.entries(contactPrefs || {}).find(([key, val]) => {
+      return key.includes(lower) || lower.split(' ').some(w => w.length > 2 && key.includes(w));
+    });
+    if (prefMatch && prefMatch[0].includes('@')) {
+      console.log('[attendee] resolved', name, 'from contact prefs to', prefMatch[0]);
+      resolved.push(prefMatch[0]);
+      continue;
+    }
+
+    // 5. Search Microsoft contacts
     try {
       const contacts = await searchContacts(name, 'mydis');
       if (contacts.length > 0) {
@@ -503,9 +530,9 @@ async function resolveAttendees(names, session) {
       }
     } catch {}
 
-    // 4. Unresolved — keep name as placeholder
+    // 6. Unresolved — keep name as placeholder
     console.log('[attendee] could not resolve', name);
-    resolved.push(name + ' (email not found — please add manually)');
+    resolved.push(name + ' (email not found — say "add [name] as VIP" after emailing them)');
   }
   return resolved;
 }

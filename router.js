@@ -487,22 +487,52 @@ async function handleTasksToday() {
   }
 }
 
-async function handlePostponeTask(taskIndex, dueString) {
-  const tasks = store.getPendingTasks();
+async function handlePostponeTask(taskIndex, dueString, itemReference) {
+  // Always fetch fresh tasks — never rely solely on cache
+  let tasks = store.getPendingTasks();
   if (!tasks || !tasks.length) {
-    const fetched = await todoist.getTodayTasks();
-    if (!fetched.length) return waSend('No outstanding tasks found 📋');
-    store.savePendingTasks(fetched);
-    if (taskIndex === null || taskIndex === undefined) {
-      return waSend('Which task? Say the number from the task list 👍');
-    }
+    tasks = await todoist.getTodayTasks();
+    if (tasks.length) store.savePendingTasks(tasks);
   }
-  const allTasks = store.getPendingTasks() || [];
-  const task = allTasks[taskIndex];
-  if (!task) return waSend('Could not find that task number 🔍 Say "tasks today" to see the list.');
+  if (!tasks || !tasks.length) {
+    return waSend('You have no outstanding tasks due today 🎉');
+  }
+
+  let task = null;
+
+  // Try index match first
+  if (taskIndex !== null && taskIndex !== undefined && !isNaN(taskIndex)) {
+    task = tasks[taskIndex] || null;
+  }
+
+  // Try keyword match if no index or index failed
+  if (!task && itemReference) {
+    const kw = itemReference.toLowerCase();
+    task = tasks.find(t => t.content.toLowerCase().includes(kw)) || null;
+  }
+
+  // If still no match, ask Claude to figure out which task from context
+  if (!task && itemReference) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const config = require('./config');
+    const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+    const taskList = tasks.map((t, i) => '[' + i + '] ' + t.content).join('\n');
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-5', max_tokens: 50,
+      messages: [{ role: 'user', content: 'Tasks:\n' + taskList + '\n\nUser said: "' + itemReference + '"\nReturn ONLY the 0-based index of the matching task, or -1 if no match.' }]
+    });
+    const idx = parseInt(msg.content[0].text.trim(), 10);
+    if (idx >= 0 && tasks[idx]) task = tasks[idx];
+  }
+
+  if (!task) {
+    const list = tasks.slice(0, 5).map((t, i) => '[T' + (i+1) + '] ' + t.content).join('\n');
+    return waSend('Not sure which task you mean 🔍 Here are your outstanding ones:\n\n' + list + '\n\nSay "postpone T2 to Friday" or "postpone the [keyword] task to [date]"');
+  }
+
   const newDate = dueString || 'tomorrow';
   await todoist.updateTaskDue(task.id, newDate);
-  const msg = 'Done! ✅ "' + task.content + '" postponed to ' + newDate;
+  const msg = 'Done! ✅ "' + task.content + '" moved to ' + newDate;
   store.saveConversationTurn('penelope', msg);
   return waSend(msg);
 }

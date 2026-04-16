@@ -169,6 +169,9 @@ async function processIntent(parsed) {
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
 
+    case 'compose_email':
+      return handleComposeEmail(parsed.personName, parsed.content, text);
+
     case 'travelling_on':
       global.PENELOPE_TRAVELLING = true;
       store.saveRule('__travelling__');
@@ -367,6 +370,19 @@ async function handleSend() {
   if (!draft) return waSend('Nothing waiting to be sent! Start with "reply to [name]" 📝');
   if (!draft.draft) return waSend('The draft is empty - say "edit [your reply]" first 📝');
   const sentAt = Date.now();
+
+  // Handle new outbound email (not a reply)
+  if (draft.type === 'new_email') {
+    for (const r of draft.recipients) {
+      await graph.sendEmail({ to: r.email, subject: draft.subject, body: draft.draft });
+    }
+    store.clearPendingDraft();
+    const toNames = draft.recipients.map(r => r.name).join(' and ');
+    const msg = 'Done! ✅ Email sent to ' + toNames;
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  }
+
   await graph.replyToEmail(draft.messageId, draft.draft, draft.account, draft.replyAll !== false);
   store.setEmailAction(draft.messageId, 'replied', 'to ' + draft.toName);
   store.removeChaseItem(draft.messageId);
@@ -818,6 +834,87 @@ async function handleContactPref(personName, prefText) {
   const msg = 'Noted! 🧠 I will remember that when writing to ' + personName + ': ' + prefText;
   store.saveConversationTurn('penelope', msg);
   return waSend(msg);
+}
+
+async function handleComposeEmail(recipientNames, topic, originalText) {
+  if (!recipientNames) return waSend('Who do you want to send this to? Give me a name 👤');
+
+  // Resolve recipient names to email addresses from team + session
+  const session = store.getSession();
+  const TEAM_MAP = {
+    'hamid': 'hamid@mydis.com', 'falak': 'falak@mydis.com',
+    'lilian': 'lilian@mydis.com', 'craig': 'craig@mydis.com',
+    'adegoke': 'adegoke@mydis.com', 'ade': 'adegoke@mydis.com',
+    'basat': 'basat@mydis.com', 'bas': 'basat@mydis.com',
+    'shams': 'shams@mydis.com', 'al': 'al@iwsuk.com',
+  };
+
+  const names = recipientNames.split(/,|and/).map(n => n.trim().toLowerCase()).filter(Boolean);
+  const resolved = [];
+  const unresolved = [];
+
+  for (const name of names) {
+    // Check team map first
+    const teamEmail = TEAM_MAP[name];
+    if (teamEmail) { resolved.push({ name, email: teamEmail }); continue; }
+
+    // Check recent emails
+    if (session) {
+      const found = session.emails.find(e =>
+        (e.fromName || '').toLowerCase().includes(name) || e.from.toLowerCase().includes(name)
+      );
+      if (found) { resolved.push({ name: found.fromName || found.from, email: found.from }); continue; }
+    }
+
+    unresolved.push(name);
+  }
+
+  if (unresolved.length > 0) {
+    return waSend('I could not find email addresses for: ' + unresolved.join(', ') + '\n\nTry saying their full name or email address, or "add [name] as VIP" after emailing them so I remember.');
+  }
+
+  // Draft the email using Claude
+  await waSend('Sure Raees, drafting that now... ✍️');
+  await new Promise(r => setTimeout(r, 800));
+
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('./config');
+  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  const travelling = global.PENELOPE_TRAVELLING || false;
+  const signature = travelling
+    ? 'Kind Regards\nRaees Sayed\n(I\'m currently travelling so replies may be slower)'
+    : 'Kind Regards\nRaees Sayed';
+
+  const recipientStr = resolved.map(r => r.name).join(' and ');
+
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 500,
+    messages: [{ role: 'user', content: 'Draft a professional email from Raees to ' + recipientStr + ' about: ' + (topic || originalText) + '\n\nFormatting rules:\n- Start with "Hi ' + (resolved.length === 1 ? resolved[0].name : resolved.map(r => r.name.split(' ')[0]).join(' and ')) + ',"\n- Blank line after greeting\n- Short clear body\n- Blank line then signature: ' + signature + '\n\nReturn ONLY the email body including signature. No subject line.' }]
+  });
+
+  const draft = msg.content[0].text.trim();
+
+  // Generate subject
+  const subjectMsg = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 30,
+    messages: [{ role: 'user', content: 'Write a short email subject line (max 8 words) for this topic: ' + (topic || originalText) + '. Return only the subject line.' }]
+  });
+  const subject = subjectMsg.content[0].text.trim().replace(/^subject:\s*/i, '');
+
+  store.savePendingDraft({
+    type: 'new_email',
+    recipients: resolved,
+    subject,
+    draft,
+    awaitingReply: false,
+    awaitingConfirm: true,
+  });
+
+  const toLine = resolved.map(r => r.name + ' (' + r.email + ')').join(', ');
+  const confirmMsg = 'Here is your draft:\n\nTo: ' + toLine + '\nSubject: ' + subject + '\n\n' + draft + '\n\n"send" to fire it off\n"edit [changes]" to tweak';
+  store.saveConversationTurn('penelope', confirmMsg);
+  return waSend(confirmMsg);
 }
 
 module.exports = { handleInbound };

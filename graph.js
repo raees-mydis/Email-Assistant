@@ -179,16 +179,7 @@ async function markMultipleAsRead(messageIds, account) {
 async function replyToEmail(messageId, replyText, account) {
   const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
   const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
-  // Step 1: Create a draft reply
-  const draft = await graphPost('/users/' + email + '/messages/' + messageId + '/createReply', {}, tokenFn);
-  // Step 2: Update the draft body
-  const token = await tokenFn();
-  const axios = require('axios');
-  await axios.patch('https://graph.microsoft.com/v1.0/users/' + email + '/messages/' + draft.id, {
-    body: { contentType: 'Text', content: replyText }
-  }, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } });
-  // Step 3: Send it — this saves to Sent Items automatically
-  await graphPost('/users/' + email + '/messages/' + draft.id + '/send', {}, tokenFn);
+  await graphPost('/users/' + email + '/messages/' + messageId + '/reply', { comment: replyText }, tokenFn);
 }
 
 async function sendEmail(opts, account) {
@@ -279,12 +270,37 @@ function mapEvent(e) {
   };
 }
 
+async function createCalendarEvent(opts, account) {
+  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+
+  const event = {
+    subject: opts.title,
+    start: { dateTime: opts.start, timeZone: 'Europe/London' },
+    end:   { dateTime: opts.end,   timeZone: 'Europe/London' },
+    body:  { contentType: 'Text', content: opts.notes || '' },
+  };
+
+  if (opts.location) event.location = { displayName: opts.location };
+  if (opts.attendees && opts.attendees.length) {
+    event.attendees = opts.attendees.map(a => ({
+      emailAddress: { address: a },
+      type: 'required',
+    }));
+  }
+
+  console.log('[graph] creating event:', JSON.stringify(event));
+  const result = await graphPost('/users/' + email + '/events', event, tokenFn);
+  console.log('[graph] event created:', result.id, result.subject);
+  return result;
+}
+
 module.exports = {
   getUnreadEmails, getIwsUnreadEmails,
   getRecentEmails, getIwsRecentEmails,
   getThreadTeamReplies, getAttachments,
   markAsRead, markMultipleAsRead,
   replyToEmail, sendEmail, getSentEmails,
-  getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents,
+  getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents, createCalendarEvent,
   TEAM_EMAILS,
 };

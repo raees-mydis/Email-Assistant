@@ -33,6 +33,23 @@ async function handleInbound(text) {
   store.saveConversationTurn('user', text);
 
   const draft = store.getPendingDraft();
+  if (draft && draft.awaitingConfirm && draft.type === 'calendar_event') {
+    const lower = text.toLowerCase().trim();
+    if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
+      store.clearPendingDraft();
+      try {
+        const result = await graph.createCalendarEvent(draft.eventData, draft.eventData.account);
+        const msg = 'Done! ✅ "' + result.subject + '" added to your calendar.';
+        store.saveConversationTurn('penelope', msg);
+        return waSend(msg);
+      } catch (err) {
+        return waSend('Had trouble adding that 😕 - ' + err.message);
+      }
+    } else if (lower === 'cancel' || lower === 'no') {
+      store.clearPendingDraft();
+      return waSend('No problem, cancelled 👍');
+    }
+  }
   if (draft && draft.awaitingReply) {
     const lower = text.toLowerCase().trim();
     if (!['cancel','update','morning brief'].includes(lower)) {
@@ -108,6 +125,9 @@ async function processIntent(parsed) {
 
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
+
+    case 'calendar_add':
+      return handleCalendarAdd(parsed.content || '');
 
     case 'day_summary_today':
       return handleDaySummary(0);
@@ -576,6 +596,36 @@ async function handleDaySummary(offsetDays) {
   } catch (err) {
     console.error('[daySummary] error:', err.message);
     return waSend('Had trouble pulling that together 😕 - ' + err.message);
+  }
+}
+
+async function handleCalendarAdd(text) {
+  try {
+    const conversation = store.getConversation();
+    const eventData = await claude.parseCalendarEvent(text, conversation);
+
+    if (!eventData || !eventData.title || !eventData.start) {
+      return waSend('I need a bit more detail to add that 📅\n\nTry something like:\n"Add a meeting with Jan tomorrow at 2pm"\n"Schedule a call with CPL Foods Friday 10am-11am"');
+    }
+
+    // Confirm before adding
+    const startStr = new Date(eventData.start).toLocaleString('en-GB', {
+      timeZone: 'Europe/London', weekday: 'short', day: 'numeric',
+      month: 'short', hour: '2-digit', minute: '2-digit'
+    });
+    const endStr = new Date(eventData.end).toLocaleString('en-GB', {
+      timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit'
+    });
+    const loc = eventData.location ? '\n📍 ' + eventData.location : '';
+    const acct = eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
+
+    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' - ' + endStr + loc + '\n\nSay "yes" to confirm or "cancel" to stop.';
+    store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
+    store.saveConversationTurn('penelope', confirmMsg);
+    return waSend(confirmMsg);
+  } catch (err) {
+    console.error('[calendarAdd] error:', err.message);
+    return waSend('Had trouble parsing that event 😕 - ' + err.message);
   }
 }
 

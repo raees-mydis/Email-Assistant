@@ -224,7 +224,7 @@ async function handleInbound(text) {
   }
 
   // Handle calendar confirm/cancel
-  if (draft && draft.awaitingConfirm) {
+  if (draft && draft.awaitingConfirm && (draft.type === 'calendar_event' || draft.type === 'calendar_update')) {
     const lower = text.toLowerCase().trim();
 
     // Allow switching to personal calendar before confirming
@@ -232,6 +232,33 @@ async function handleInbound(text) {
       const updatedData = { ...draft.eventData, calendarName: 'personal' };
       store.savePendingDraft({ ...draft, eventData: updatedData });
       return waSend('Got it — will add to your personal calendar instead 👤\n\nSay "yes" to confirm or "cancel" to stop.');
+    }
+
+    // Handle corrections to the pending event — "actually make it 10:30", "change to Monday", "I said Monday"
+    const isCorrection = /^(actually|wait|no|i said|make it|change (it )?to|change the time|reschedule to|move it to|at \d)/i.test(text) ||
+      /(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|next week|\d+:\d+|\d+(am|pm))/i.test(text) && text.length < 60;
+    if (isCorrection && draft.eventData) {
+      await waSend('Updating that... ✍️');
+      const Anthropic = require('@anthropic-ai/sdk');
+      const config = require('./config');
+      const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+      const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' });
+      const result = await client.messages.create({
+        model: 'claude-sonnet-4-5', max_tokens: 300,
+        messages: [{ role: 'user', content: 'Current event being scheduled:\n' + JSON.stringify(draft.eventData) + '\n\nCorrection: "' + text + '"\n\nNow: ' + now + '\n\nReturn updated JSON with same structure, applying the correction. Keep all other fields the same. Return ONLY valid JSON.' }]
+      });
+      const raw = result.content[0].text.trim();
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) {
+        const updated = JSON.parse(m[0]);
+        store.savePendingDraft({ ...draft, eventData: updated });
+        const startStr = new Date(updated.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const endStr = new Date(updated.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        const attendeeNote = updated.attendees && updated.attendees.length ? '\n👥 Inviting: ' + updated.attendees.join(', ') : '';
+        const msg = 'Updated! Here is the revised event:\n\n📅 ' + updated.title + '\n🕐 ' + startStr + ' — ' + endStr + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
+        store.saveConversationTurn('penelope', msg);
+        return waSend(msg);
+      }
     }
 
     if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
@@ -482,9 +509,15 @@ async function handlePeriodUpdate(minutes) {
   await waSend('Sure Raees, pulling that for you... 🔍');
   await new Promise(r => setTimeout(r, 800));
   try {
-    const emails = await graph.getRecentEmails(minutes);
+    const [mydisEmails, iwsEmails] = await Promise.all([
+      graph.getRecentEmails(minutes),
+      graph.getIwsRecentEmails(minutes),
+    ]);
     const userEmail = (process.env.USER_EMAIL || '').toLowerCase();
-    const inbound = emails.filter(e => !e.from.toLowerCase().includes(userEmail));
+    const mydisinbound = mydisEmails.filter(e => !e.from.toLowerCase().includes(userEmail));
+    const iwsInbound = iwsEmails.filter(e => !e.from.toLowerCase().includes('raees@iwsuk.com'));
+    const inbound = [...mydisinbound, ...iwsInbound];
+    console.log('[period] MYDIS:', mydisinbound.length, '| IWS:', iwsInbound.length);
     store.saveSession(inbound);
     const actions = store.getEmailActions();
     const stakeholders = store.getStakeholderAssignments();
@@ -892,7 +925,10 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
     const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
     const loc = eventData.location ? '\n📍 ' + eventData.location : '';
     const acct = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
-    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + '\n\nSay "yes" to confirm or "cancel" to stop.';
+    const attendeeNote = eventData.attendees && eventData.attendees.length
+      ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
+      : '';
+    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
     store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
     store.saveConversationTurn('penelope', confirmMsg);
     return waSend(confirmMsg);

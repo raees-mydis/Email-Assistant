@@ -54,9 +54,10 @@ function extractPeopleFromText(t) {
   return found.join(', ') || null;
 }
 
-// Pre-filter: catch obvious intents before Claude
+// Pre-filter: catch obvious intents before Claude — returns array
 function preFilterIntent(text) {
   const t = text.toLowerCase().trim();
+  const results = [];
 
   // Compose email patterns
   const isCompose =
@@ -66,24 +67,25 @@ function preFilterIntent(text) {
 
   if (isCompose) {
     const names = extractPeopleFromText(t);
-    return { intent: 'compose_email', personName: names, content: text };
+    results.push({ intent: 'compose_email', personName: names, content: text });
   }
 
-  // Update existing calendar event
+  // Update existing calendar event — check even if compose was found
   const isUpdateCal =
-    /(change|move|update|reschedule|shift|push).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||
-    /(meeting|call|mastermind|standup).+(change|move|update|reschedule|to \d+pm|to \d+am)/i.test(text);
+    /(change|move|update|reschedule|shift|push|propose).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||
+    /(meeting|call|mastermind|standup).+(change|move|update|reschedule|propose|to \d+pm|to \d+am)/i.test(text) ||
+    /(propose|suggest).+(time|new time|calendar|event|invite)/i.test(text);
 
   if (isUpdateCal) {
-    return { intent: 'update_calendar_event', itemReference: text, content: text };
+    results.push({ intent: 'update_calendar_event', itemReference: text, content: text });
   }
 
-  // "send" ONLY as standalone command
-  if (/^send(\s*$|\s+(it|that|this|draft|the draft))/i.test(t)) {
-    return { intent: 'send' };
+  // "send" ONLY as standalone command (only if nothing else matched)
+  if (results.length === 0 && /^send(\s*$|\s+(it|that|this|draft|the draft))/i.test(t)) {
+    results.push({ intent: 'send' });
   }
 
-  return null;
+  return results.length > 0 ? results : null;
 }
 
 async function handleInbound(text) {
@@ -211,8 +213,11 @@ async function handleInbound(text) {
   // Pre-filter: catch obvious intents before Claude
   const preFiltered = preFilterIntent(text);
   if (preFiltered) {
-    console.log('[router] pre-filtered intent:', JSON.stringify(preFiltered));
-    await processIntent({ emailIndex: null, ...preFiltered }, 1, text);
+    console.log('[router] pre-filtered intents:', JSON.stringify(preFiltered));
+    const pfCount = preFiltered.length;
+    for (const pf of preFiltered) {
+      await processIntent({ emailIndex: null, ...pf }, pfCount, text);
+    }
     return;
   }
 

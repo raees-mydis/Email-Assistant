@@ -280,6 +280,53 @@ function mapEvent(e) {
   };
 }
 
+async function findCalendarEvent(searchTerm, account, daysAhead) {
+  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+  // Search across next 30 days by default
+  const start = new Date();
+  const end = new Date(Date.now() + (daysAhead || 30) * 86400000);
+  try {
+    const data = await graphGet('/users/' + email + '/calendarView', {
+      startDateTime: start.toISOString(),
+      endDateTime: end.toISOString(),
+      '$select': 'id,subject,start,end,location,attendees,bodyPreview,isAllDay',
+      '$orderby': 'start/dateTime',
+      '$top': 50,
+    }, tokenFn);
+    const events = (data.value || []);
+    const kw = searchTerm.toLowerCase();
+    // Score by keyword match
+    const scored = events.map(e => {
+      const subj = (e.subject || '').toLowerCase();
+      const words = kw.split(/\s+/).filter(w => w.length > 2);
+      const score = words.filter(w => subj.includes(w)).length;
+      return { event: e, score };
+    }).filter(e => e.score > 0);
+    scored.sort((a, b) => b.score - a.score);
+    return scored.length > 0 ? scored[0].event : null;
+  } catch (err) {
+    console.error('[graph] findCalendarEvent error:', err.message);
+    return null;
+  }
+}
+
+async function updateCalendarEvent(eventId, updates, account) {
+  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+  const token = await tokenFn();
+  const body = {};
+  if (updates.start) body.start = { dateTime: updates.start, timeZone: 'Europe/London' };
+  if (updates.end)   body.end   = { dateTime: updates.end,   timeZone: 'Europe/London' };
+  if (updates.title) body.subject = updates.title;
+  if (updates.location) body.location = { displayName: updates.location };
+  const axios = require('axios');
+  const res = await axios.patch('https://graph.microsoft.com/v1.0/users/' + email + '/events/' + eventId, body, {
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+  });
+  return res.data;
+}
+
 async function createCalendarEvent(opts, account) {
   const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
   const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
@@ -311,6 +358,6 @@ module.exports = {
   getThreadTeamReplies, getAttachments,
   markAsRead, markMultipleAsRead,
   replyToEmail, sendEmail, getSentEmails,
-  getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents, createCalendarEvent,
+  getCalendarEvents, getIwsCalendarEvents, getCombinedCalendarEvents, createCalendarEvent, findCalendarEvent, updateCalendarEvent,
   TEAM_EMAILS,
 };

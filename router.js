@@ -81,12 +81,19 @@ async function handleInbound(text) {
     if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
       store.clearPendingDraft();
       try {
-        const result = await graph.createCalendarEvent(draft.eventData, draft.eventData.account);
-        const msg = 'Done! ✅ "' + result.subject + '" added to your calendar.';
-        store.saveConversationTurn('penelope', msg);
-        return waSend(msg);
+        if (draft.type === 'calendar_update') {
+          await graph.updateCalendarEvent(draft.eventId, draft.updates, draft.account);
+          const msg = 'Done! ✅ "' + draft.eventTitle + '" has been updated.';
+          store.saveConversationTurn('penelope', msg);
+          return waSend(msg);
+        } else {
+          const result = await graph.createCalendarEvent(draft.eventData, draft.eventData.account);
+          const msg = 'Done! ✅ "' + result.subject + '" added to your calendar.';
+          store.saveConversationTurn('penelope', msg);
+          return waSend(msg);
+        }
       } catch (err) {
-        return waSend('Had trouble adding that 😕 - ' + err.message);
+        return waSend('Had trouble with that 😕 - ' + err.message);
       }
     } else if (lower === 'cancel' || lower === 'no') {
       store.clearPendingDraft();
@@ -171,6 +178,9 @@ async function processIntent(parsed) {
 
     case 'compose_email':
       return handleComposeEmail(parsed.personName, parsed.content, text);
+
+    case 'update_calendar_event':
+      return handleUpdateCalendarEvent(parsed.itemReference || parsed.content, parsed.content, text);
 
     case 'travelling_on':
       global.PENELOPE_TRAVELLING = true;
@@ -915,6 +925,67 @@ async function handleComposeEmail(recipientNames, topic, originalText) {
   const confirmMsg = 'Here is your draft:\n\nTo: ' + toLine + '\nSubject: ' + subject + '\n\n' + draft + '\n\n"send" to fire it off\n"edit [changes]" to tweak';
   store.saveConversationTurn('penelope', confirmMsg);
   return waSend(confirmMsg);
+}
+
+async function handleUpdateCalendarEvent(eventKeyword, changeDescription, originalText) {
+  if (!eventKeyword) return waSend('Which meeting do you want to update? Give me the name or a keyword 📅');
+
+  await waSend('Sure Raees, finding that meeting... 📅');
+  await new Promise(r => setTimeout(r, 600));
+
+  try {
+    // Search both calendars
+    const [mydisEvent, iwsEvent] = await Promise.all([
+      graph.findCalendarEvent(eventKeyword, 'mydis'),
+      graph.findCalendarEvent(eventKeyword, 'iws'),
+    ]);
+    const found = mydisEvent || iwsEvent;
+    const account = mydisEvent ? 'mydis' : 'iws';
+
+    if (!found) {
+      return waSend('Could not find a meeting matching "' + eventKeyword + '" in your calendar 🔍\n\nTry giving me more of the event title.');
+    }
+
+    // Parse the change using Claude
+    const Anthropic = require('@anthropic-ai/sdk');
+    const config = require('./config');
+    const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+    const currentStart = found.start ? found.start.dateTime : '';
+    const currentEnd   = found.end   ? found.end.dateTime   : '';
+    const currentDate  = currentStart ? new Date(currentStart).toISOString().split('T')[0] : '';
+    const now = new Date().toISOString();
+
+    const parseMsg = await client.messages.create({
+      model: 'claude-sonnet-4-5', max_tokens: 200,
+      messages: [{ role: 'user', content: 'Current event: "' + found.subject + '" starts ' + currentStart + ' ends ' + currentEnd + '\nCurrent date/time: ' + now + '\nChange requested: "' + (changeDescription || originalText) + '"\n\nReturn ONLY valid JSON with the new values:\n{ "start": "ISO8601 or null if unchanged", "end": "ISO8601 or null if unchanged", "title": null, "location": null }\n\nIf only time changes, keep the same date. If moving to tomorrow keep same time unless specified.' }]
+    });
+
+    const raw = parseMsg.content[0].text.trim();
+    const m = raw.match(/\{[\s\S]*\}/);
+    const updates = m ? JSON.parse(m[0]) : {};
+
+    if (!updates.start && !updates.end && !updates.title && !updates.location) {
+      return waSend('Not sure what change you want — can you be more specific? e.g. "move it to 2pm" or "change it to tomorrow"');
+    }
+
+    // Show confirmation
+    const newStartStr = updates.start
+      ? new Date(updates.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : new Date(currentStart).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const newEndStr = (updates.end || currentEnd)
+      ? new Date(updates.end || currentEnd).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' })
+      : '';
+
+    store.savePendingDraft({ type: 'calendar_update', eventId: found.id, account, updates, eventTitle: found.subject, awaitingConfirm: true });
+
+    const confirmMsg = 'Updating "' + found.subject + '":\n\n📅 New time: ' + newStartStr + (newEndStr ? ' - ' + newEndStr : '') + '\n\nSay "yes" to confirm or "cancel" to stop.';
+    store.saveConversationTurn('penelope', confirmMsg);
+    return waSend(confirmMsg);
+  } catch (err) {
+    console.error('[updateCal] error:', err.message);
+    return waSend('Had trouble updating that 😕 - ' + err.message);
+  }
 }
 
 module.exports = { handleInbound };

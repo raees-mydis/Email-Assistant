@@ -476,9 +476,7 @@ async function handleSend() {
 
   // Handle new outbound email (not a reply)
   if (draft.type === 'new_email') {
-    for (const r of draft.recipients) {
-      await graph.sendEmail({ to: r.email, subject: draft.subject, body: draft.draft });
-    }
+    await graph.sendEmail({ to: draft.recipients, subject: draft.subject, body: draft.draft });
     store.clearPendingDraft();
     const toNames = draft.recipients.map(r => r.name).join(' and ');
     const msg = 'Done! ✅ Email sent to ' + toNames;
@@ -1045,9 +1043,7 @@ async function handleComposeEmail(recipientNames, topic, originalText, autoSend)
 
   // In multi-intent mode, auto-send without waiting for confirmation
   if (autoSend) {
-    for (const r of resolved) {
-      await graph.sendEmail({ to: r.email, subject, body: draft });
-    }
+    await graph.sendEmail({ to: resolved, subject, body: draft });
     const msg = 'Done! ✅ Email sent to ' + toLine + '\nSubject: ' + subject;
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);

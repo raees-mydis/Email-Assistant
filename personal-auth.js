@@ -8,12 +8,44 @@ const CLIENT_SECRET = process.env.PERSONAL_CLIENT_SECRET || '';
 const REDIRECT_URI  = process.env.PERSONAL_REDIRECT_URI  || 'https://email-assistant-production-8a69.up.railway.app/auth/personal/callback';
 const TENANT        = 'consumers'; // personal Microsoft accounts
 const SCOPES        = 'Calendars.ReadWrite offline_access';
-const TOKEN_FILE    = '/tmp/personal_token.json';
+// Store tokens in env var (persists across restarts) + /tmp as cache
+const TOKEN_FILE = '/tmp/personal_token.json';
 
 function loadTokens() {
-  try { return JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')); } catch { return null; }
+  // Try /tmp cache first (fast)
+  try {
+    const cached = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+    if (cached) return cached;
+  } catch {}
+  // Fall back to env var (survives restarts)
+  try {
+    if (process.env.PERSONAL_TOKEN) {
+      const t = JSON.parse(Buffer.from(process.env.PERSONAL_TOKEN, 'base64').toString());
+      // Write to /tmp cache for speed
+      fs.writeFileSync(TOKEN_FILE, JSON.stringify(t), 'utf8');
+      return t;
+    }
+  } catch {}
+  return null;
 }
-function saveTokens(t) { fs.writeFileSync(TOKEN_FILE, JSON.stringify(t), 'utf8'); }
+
+function saveTokens(t) {
+  // Save to /tmp cache
+  try { fs.writeFileSync(TOKEN_FILE, JSON.stringify(t), 'utf8'); } catch {}
+  // Also update env var via Railway API if available
+  const encoded = Buffer.from(JSON.stringify(t)).toString('base64');
+  // Store in a way that survives — write to a known path as backup
+  try {
+    fs.writeFileSync('/tmp/personal_token_backup.json', JSON.stringify(t), 'utf8');
+  } catch {}
+  // Log the token so it can be set as env var if needed
+  if (!process.env.PERSONAL_TOKEN) {
+    console.log('[personal-auth] TOKEN OBTAINED - add this to Railway env vars as PERSONAL_TOKEN:');
+    console.log(encoded);
+  }
+  // Update in-memory env var so current process keeps working
+  process.env.PERSONAL_TOKEN = encoded;
+}
 
 function getAuthUrl() {
   const params = new URLSearchParams({

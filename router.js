@@ -91,6 +91,16 @@ function preFilterIntent(text) {
     }
   }
 
+  // Calendar search — "when is X", "what day is X", "find X meeting", "is X on my calendar"
+  const isCalSearch =
+    /^(when is|what day is|what time is|find|is there|do i have|where is).+(meeting|call|appointment|event|session|poultry|mastermind|standup)/i.test(text) ||
+    /^can you (tell me|check|find|look up).+(meeting|call|appointment|event|calendar|when|schedule)/i.test(text) ||
+    /(meeting|call|appointment|event).+(when|what day|what time|scheduled|on my calendar)/i.test(text);
+
+  if (isCalSearch && !isCompose) {
+    results.push({ intent: 'calendar_search', itemReference: text, content: text });
+  }
+
   // "send" ONLY as standalone command (only if nothing else matched)
   if (results.length === 0 && /^send(\s*$|\s+(it|that|this|draft|the draft))/i.test(t)) {
     results.push({ intent: 'send' });
@@ -1080,42 +1090,36 @@ function findEmailByKeyword(session, keyword) {
 async function handleCalendarSearch(keyword) {
   if (!keyword) return waSend('What event are you looking for? 🔍');
   await waSend('Searching your calendar... 🔍');
+
+  // Extract the key search term — strip question words
+  const searchTerm = keyword
+    .replace(/^(can you |please )?(tell me |check |find |look up |when is |what day is |what time is |is there |do i have |where is )/i, '')
+    .replace(/(meeting|call|appointment|event|session|on my calendar|scheduled|\?)/gi, '')
+    .trim() || keyword;
+
   try {
     const [mydisEvent, iwsEvent] = await Promise.all([
-      graph.findCalendarEvent(keyword, 'mydis', 90),
-      graph.findCalendarEvent(keyword, 'iws', 90),
+      graph.findCalendarEvent(searchTerm, 'mydis', 90),
+      graph.findCalendarEvent(searchTerm, 'iws', 90),
     ]);
 
-    // Also search personal calendar if authenticated
-    let personalEvent = null;
-    try {
-      const personalAuth = require('./personal-auth');
-      if (personalAuth.isAuthenticated()) {
-        const personalEvents = await personalAuth.getPersonalCalendarEvents(0);
-        // Search next 90 days worth
-        const allPersonal = [];
-        for (let i = 0; i < 90; i++) {
-          const evts = await personalAuth.getPersonalCalendarEvents(i);
-          allPersonal.push(...evts);
-          if (allPersonal.length > 100) break;
-        }
-        const kw = keyword.toLowerCase();
-        personalEvent = allPersonal.find(e => (e.subject || '').toLowerCase().includes(kw.split(' ')[0]));
-      }
-    } catch {}
-
-    const found = mydisEvent || iwsEvent || personalEvent;
+    const found = mydisEvent || iwsEvent;
     if (!found) {
-      return waSend('I could not find "' + keyword + '" in your calendar for the next 90 days 🔍');
+      return waSend('I could not find "' + searchTerm + '" in your calendar for the next 90 days 🔍\n\nTry giving me the exact event name.');
     }
+
     const start = found.start ? found.start.dateTime : found.startTime;
+    const end = found.end ? found.end.dateTime : found.endTime;
     const dateStr = new Date(start).toLocaleString('en-GB', {
       timeZone: 'Europe/London', weekday: 'long', day: 'numeric',
       month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
+    const endStr = end ? new Date(end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) : '';
     const loc = found.location ? (found.location.displayName || found.location) : null;
-    const msg = '📅 Found it!\n\n' + (found.subject || found.title || keyword) +
-      '\n🗓 ' + dateStr + (loc ? '\n📍 ' + loc : '');
+    const acct = found.account === 'iws' ? ' [IWS]' : '';
+    const msg = '📅 Found it!' + acct + '\n\n' + (found.subject || searchTerm) +
+      '\n🗓 ' + dateStr + (endStr ? ' — ' + endStr : '') +
+      (loc ? '\n📍 ' + loc : '');
     store.saveConversationTurn('penelope', msg);
     return waSend(msg);
   } catch (err) {

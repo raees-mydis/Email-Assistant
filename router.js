@@ -204,6 +204,14 @@ async function handleInbound(text) {
   // Handle calendar confirm/cancel
   if (draft && draft.awaitingConfirm) {
     const lower = text.toLowerCase().trim();
+
+    // Allow switching to personal calendar before confirming
+    if (lower.includes('personal') || lower.includes('personal calendar') || lower.includes('outlook')) {
+      const updatedData = { ...draft.eventData, calendarName: 'personal' };
+      store.savePendingDraft({ ...draft, eventData: updatedData });
+      return waSend('Got it — will add to your personal calendar instead 👤\n\nSay "yes" to confirm or "cancel" to stop.');
+    }
+
     if (lower === 'yes' || lower === 'confirm' || lower === 'add it' || lower === 'go ahead') {
       store.clearPendingDraft();
       try {
@@ -213,13 +221,15 @@ async function handleInbound(text) {
           store.saveConversationTurn('penelope', msg);
           return waSend(msg);
         } else {
-          const result = await graph.createCalendarEvent(draft.eventData, draft.eventData.account);
-          const msg = 'Done! ✅ "' + result.subject + '" added to your calendar.';
+          const calLabel = draft.eventData.calendarName === 'personal' ? 'personal calendar' : 'MYDIS calendar';
+          const result = await graph.createCalendarEvent(draft.eventData, draft.eventData.account || 'mydis');
+          const msg = 'Done! ✅ "' + result.subject + '" added to your ' + calLabel + '.';
           store.saveConversationTurn('penelope', msg);
           return waSend(msg);
         }
       } catch (err) {
-        return waSend('Had trouble with that 😕 - ' + err.message);
+        console.error('[handleSend] calendar error:', err.response ? JSON.stringify(err.response.data) : err.message);
+        return waSend('Had trouble adding that 😕\n' + (err.response ? JSON.stringify(err.response.data) : err.message));
       }
     } else if (lower === 'cancel' || lower === 'no') {
       store.clearPendingDraft();

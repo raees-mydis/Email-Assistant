@@ -403,9 +403,16 @@ async function createCalendarEvent(opts, account) {
   }
 
   console.log('[graph] creating event at:', calendarPath);
-  const result = await graphPost(calendarPath, event, tokenFn);
-  console.log('[graph] event created:', result.id, result.subject);
-  return result;
+  console.log('[graph] event payload:', JSON.stringify({ subject: event.subject, start: event.start, end: event.end }));
+  try {
+    const result = await graphPost(calendarPath, event, tokenFn);
+    console.log('[graph] event created:', result.id, result.subject);
+    return result;
+  } catch (err) {
+    const detail = err.response ? JSON.stringify(err.response.data) : err.message;
+    console.error('[graph] createCalendarEvent failed:', detail);
+    throw err;
+  }
 }
 
 module.exports = {

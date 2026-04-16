@@ -162,6 +162,15 @@ async function processIntent(parsed) {
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
 
+    case 'add_vip':
+      return handleAddVip(parsed.personName, parsed.content);
+
+    case 'remember_rule':
+      return handleRememberRule(parsed.content);
+
+    case 'contact_pref':
+      return handleContactPref(parsed.personName, parsed.content);
+
     case 'calendar_add':
       return handleCalendarAdd(parsed.content || '');
 
@@ -324,8 +333,10 @@ async function handleReplyContent(content, draftInfo) {
   await waSend(useExact ? 'Using your exact words ✍️' : 'Polishing that up... ✍️');
   const session = store.getSession();
   const email = session ? session.emails.find(e => e.id === draftInfo.messageId) : null;
-  const polished = email ? await claude.reviewReply(email, content, useExact) : content;
-  store.savePendingDraft({ ...draftInfo, draft: polished, awaitingReply: false });
+  const contactPref = store.getContactPref(draftInfo.toAddress);
+  const toneExamples = store.getToneExamples();
+  const polished = email ? await claude.reviewReply(email, content, useExact, contactPref, toneExamples) : content;
+  store.savePendingDraft({ ...draftInfo, draft: polished, awaitingReply: false, originalDictated: content });
   const ccNote = draftInfo.replyAll && draftInfo.ccRecipients && draftInfo.ccRecipients.length
     ? '\n👥 CC: ' + draftInfo.ccRecipients.map(r => r.name || r.email).join(', ')
     : '';
@@ -338,9 +349,17 @@ async function handleSend() {
   const draft = store.getPendingDraft();
   if (!draft) return waSend('Nothing waiting to be sent! Start with "reply to [name]" 📝');
   if (!draft.draft) return waSend('The draft is empty - say "edit [your reply]" first 📝');
+  const sentAt = Date.now();
   await graph.replyToEmail(draft.messageId, draft.draft, draft.account, draft.replyAll !== false);
   store.setEmailAction(draft.messageId, 'replied', 'to ' + draft.toName);
   store.removeChaseItem(draft.messageId);
+  // Track reply speed for this contact
+  const session = store.getSession();
+  const origEmail = session ? session.emails.find(e => e.id === draft.messageId) : null;
+  if (origEmail && origEmail.receivedAt) {
+    const msToReply = sentAt - new Date(origEmail.receivedAt).getTime();
+    store.trackReply(draft.toAddress, msToReply);
+  }
   store.clearPendingDraft();
   const msg = 'Done! ✅ Reply sent to ' + draft.toName;
   store.saveConversationTurn('penelope', msg);
@@ -350,6 +369,11 @@ async function handleSend() {
 async function handleEdit(newText) {
   const draft = store.getPendingDraft();
   if (!draft) return waSend('No draft to edit - start with "reply to [name]" first 📝');
+  // Save tone example — learn from this edit
+  if (draft.draft && draft.draft !== newText && draft.toAddress) {
+    store.saveToneExample(draft.toAddress, draft.toName, draft.draft, newText, draft.subject);
+    console.log('[learning] saved tone example for', draft.toAddress);
+  }
   store.savePendingDraft({ ...draft, draft: newText, awaitingReply: false });
   const msg = 'Updated! ✏️\n\n' + newText + '\n\n"send" when you are happy 👍';
   store.saveConversationTurn('penelope', msg);
@@ -733,6 +757,50 @@ async function handleCalendarAdd(text) {
     console.error('[calendarAdd] error:', err.message);
     return waSend('Had trouble parsing that event 😕 - ' + err.message);
   }
+}
+
+async function handleAddVip(personName, emailAddr) {
+  if (!personName && !emailAddr) return waSend('Who do you want to add as a VIP? Give me a name or email 👤');
+  // Try to find them in current session emails
+  const session = store.getSession();
+  let resolvedEmail = emailAddr, resolvedName = personName;
+  if (session && personName) {
+    const found = session.emails.find(e => {
+      const senderName = (e.fromName || '').toLowerCase();
+      const senderEmail = e.from.toLowerCase();
+      return senderName.includes(personName.toLowerCase()) || senderEmail.includes(personName.toLowerCase());
+    });
+    if (found) { resolvedEmail = found.from; resolvedName = found.fromName || found.from; }
+  }
+  store.addVip(resolvedEmail, resolvedName, 'Added by Raees');
+  const msg = 'Done! ⭐ ' + (resolvedName || resolvedEmail) + ' is now a VIP — they will always be surfaced at the top of your digest.';
+  store.saveConversationTurn('penelope', msg);
+  return waSend(msg);
+}
+
+async function handleRememberRule(ruleText) {
+  if (!ruleText) return waSend('What should I remember? 🧠');
+  store.saveRule(ruleText);
+  const msg = 'Got it! 🧠 I will remember: "' + ruleText + '"';
+  store.saveConversationTurn('penelope', msg);
+  return waSend(msg);
+}
+
+async function handleContactPref(personName, prefText) {
+  if (!personName || !prefText) return waSend('Who is this about and what should I know? e.g. "always informal with Craig" 👤');
+  const session = store.getSession();
+  let emailKey = personName.toLowerCase();
+  if (session) {
+    const found = session.emails.find(e => (e.fromName || '').toLowerCase().includes(personName.toLowerCase()));
+    if (found) emailKey = found.from.toLowerCase();
+  }
+  const lower = prefText.toLowerCase();
+  const formality = lower.includes('informal') || lower.includes('casual') || lower.includes('friendly') ? 'informal'
+    : lower.includes('formal') || lower.includes('professional') ? 'formal' : null;
+  store.saveContactPref(emailKey, { formality: formality || undefined, notes: prefText });
+  const msg = 'Noted! 🧠 I will remember that when writing to ' + personName + ': ' + prefText;
+  store.saveConversationTurn('penelope', msg);
+  return waSend(msg);
 }
 
 module.exports = { handleInbound };

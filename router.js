@@ -962,7 +962,7 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     const organiserEmail = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.address : '').toLowerCase();
     const isOrganiser = organiserEmail.includes(userEmail.split('@')[0]) || organiserEmail === userEmail || organiserEmail === 'raees@iwsuk.com';
 
-    // Parse the requested change first
+    // Parse the requested change FIRST (before organiser check so updates are available)
     const Anthropic = require('@anthropic-ai/sdk');
     const config = require('./config');
     const client = new Anthropic({ apiKey: config.anthropic.apiKey });
@@ -975,6 +975,7 @@ async function handleUpdateCalendarEvent(eventKeyword, changeDescription, origin
     const rawParse = parseResult.content[0].text.trim();
     const mParse = rawParse.match(/\{[\s\S]*\}/);
     const updates = mParse ? JSON.parse(mParse[0]) : {};
+    console.log('[calendar] parsed updates:', JSON.stringify(updates));
 
     if (!isOrganiser && organiserEmail) {
       const organiserName = (found.organizer && found.organizer.emailAddress ? found.organizer.emailAddress.name : null) || organiserEmail;

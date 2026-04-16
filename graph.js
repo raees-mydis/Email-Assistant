@@ -240,12 +240,27 @@ async function getCalendarEvents(offsetDays) {
   const email = config.azure.userEmail;
   const { start, end } = getDayRange(offsetDays);
   try {
-    const data = await graphGet('/users/' + email + '/calendarView', {
-      startDateTime: start, endDateTime: end,
-      '$select': 'subject,start,end,location,attendees,bodyPreview,isAllDay,isCancelled,showAs,organizer',
-      '$orderby': 'start/dateTime', '$top': 20,
-    }, getMydisToken);
-    return (data.value || []).filter(e => !e.isCancelled && e.showAs !== 'free').map(mapEvent);
+    // Get events from ALL calendars including shared ones
+    const calendars = await getCalendars('mydis');
+    console.log('[graph] fetching from', calendars.length, 'calendars:', calendars.map(c => c.name).join(', '));
+    const allEvents = [];
+    for (const cal of calendars) {
+      try {
+        const data = await graphGet('/users/' + email + '/calendars/' + cal.id + '/calendarView', {
+          startDateTime: start, endDateTime: end,
+          '$select': 'subject,start,end,location,attendees,bodyPreview,isAllDay,isCancelled,showAs,organizer',
+          '$orderby': 'start/dateTime', '$top': 20,
+        }, getMydisToken);
+        const events = (data.value || [])
+          .filter(e => !e.isCancelled && e.showAs !== 'free')
+          .map(e => ({ ...mapEvent(e), calendarName: cal.name }));
+        allEvents.push(...events);
+      } catch (err) {
+        console.error('[graph] calendar fetch error for', cal.name, ':', err.message);
+      }
+    }
+    // Sort by start time
+    return allEvents.sort((a, b) => new Date(a.startTime || 0) - new Date(b.startTime || 0));
   } catch (err) { console.error('[graph] calendar error:', err.message); return []; }
 }
 

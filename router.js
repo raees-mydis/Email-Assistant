@@ -28,6 +28,13 @@ const DELEGATES = {
   'shams':   'shams@mydis.com',
 };
 
+// Restore travelling state from saved rules
+(function() {
+  const rules = store.getRules();
+  const lastTravel = rules.filter(r => r.rule === '__travelling__' || r.rule === '__not_travelling__').pop();
+  if (lastTravel && lastTravel.rule === '__travelling__') global.PENELOPE_TRAVELLING = true;
+})();
+
 async function handleInbound(text) {
   console.log('[router] received:', text);
   store.saveConversationTurn('user', text);
@@ -161,6 +168,16 @@ async function processIntent(parsed) {
 
     case 'stakeholder_assign':
       return handleStakeholderAssign(parsed.content);
+
+    case 'travelling_on':
+      global.PENELOPE_TRAVELLING = true;
+      store.saveRule('__travelling__');
+      return waSend('Got it! ✈️ I will add your travelling disclaimer to all emails until you tell me you\'re back.');
+
+    case 'travelling_off':
+      global.PENELOPE_TRAVELLING = false;
+      store.saveRule('__not_travelling__');
+      return waSend('Welcome back! 🏠 Travelling disclaimer removed from emails.');
 
     case 'add_vip':
       return handleAddVip(parsed.personName, parsed.content);

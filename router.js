@@ -70,6 +70,9 @@ function preFilterIntent(text) {
     results.push({ intent: 'compose_email', personName: names, content: text });
   }
 
+  // Detect personal calendar request early
+  const isPersonalCal = /personal calendar|my personal|outlook calendar/i.test(text);
+
   // Update existing calendar event — check even if compose was found
   const isUpdateCal =
     /(change|move|update|reschedule|shift|push|propose).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||
@@ -78,6 +81,14 @@ function preFilterIntent(text) {
 
   if (isUpdateCal) {
     results.push({ intent: 'update_calendar_event', itemReference: text, content: text });
+  }
+
+  // Calendar add with personal flag
+  const isCalAdd = /(add|put|schedule|create|book).+(calendar|appointment|event|meeting)/i.test(text) && !isUpdateCal && !isCompose;
+  if (isCalAdd || isPersonalCal) {
+    if (!results.some(r => r.intent === 'calendar_add' || r.intent === 'update_calendar_event')) {
+      results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null });
+    }
   }
 
   // "send" ONLY as standalone command (only if nothing else matched)
@@ -294,6 +305,9 @@ async function processIntent(parsed, intentCount, text) {
     case 'calendar_tomorrow':
       return handleCalendar(1);
 
+    case 'calendar_search':
+      return handleCalendarSearch(parsed.itemReference || parsed.content || text);
+
     case 'reply':
       return handleReply(parsed.emailIndex, parsed.content, parsed.personName, parsed.useExact);
 
@@ -340,7 +354,7 @@ async function processIntent(parsed, intentCount, text) {
       return handleUpdateCalendarEvent(parsed.itemReference || parsed.content, parsed.content, text, intentCount > 1);
 
     case 'calendar_add':
-      return handleCalendarAdd(parsed.content || text || '');
+      return handleCalendarAdd(parsed.content || text || '', parsed.calendarName);
 
     case 'day_summary_today':
       return handleDaySummary(0);
@@ -831,7 +845,7 @@ async function handleDaySummary(offsetDays) {
   }
 }
 
-async function handleCalendarAdd(text) {
+async function handleCalendarAdd(text, calendarNameHint) {
   try {
     const conversation = store.getConversation();
     const tasks = await todoist.getTodayTasks();
@@ -860,10 +874,12 @@ async function handleCalendarAdd(text) {
     if (!eventData || !eventData.title || !eventData.start) {
       return waSend('I need a bit more detail 📅\n\nTry: "Add a meeting with Jan tomorrow at 2pm"');
     }
+    // Apply calendarName hint from initial request
+    if (calendarNameHint) eventData.calendarName = calendarNameHint;
     const startStr = new Date(eventData.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
     const loc = eventData.location ? '\n📍 ' + eventData.location : '';
-    const acct = eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
+    const acct = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
     const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + '\n\nSay "yes" to confirm or "cancel" to stop.';
     store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
     store.saveConversationTurn('penelope', confirmMsg);
@@ -1057,6 +1073,52 @@ function findEmailByKeyword(session, keyword) {
     (e.fromName || '').toLowerCase().includes(kw) || e.from.toLowerCase().includes(kw) ||
     e.subject.toLowerCase().includes(kw) || e.preview.toLowerCase().includes(kw)
   ) || null;
+}
+
+async function handleCalendarSearch(keyword) {
+  if (!keyword) return waSend('What event are you looking for? 🔍');
+  await waSend('Searching your calendar... 🔍');
+  try {
+    const [mydisEvent, iwsEvent] = await Promise.all([
+      graph.findCalendarEvent(keyword, 'mydis', 90),
+      graph.findCalendarEvent(keyword, 'iws', 90),
+    ]);
+
+    // Also search personal calendar if authenticated
+    let personalEvent = null;
+    try {
+      const personalAuth = require('./personal-auth');
+      if (personalAuth.isAuthenticated()) {
+        const personalEvents = await personalAuth.getPersonalCalendarEvents(0);
+        // Search next 90 days worth
+        const allPersonal = [];
+        for (let i = 0; i < 90; i++) {
+          const evts = await personalAuth.getPersonalCalendarEvents(i);
+          allPersonal.push(...evts);
+          if (allPersonal.length > 100) break;
+        }
+        const kw = keyword.toLowerCase();
+        personalEvent = allPersonal.find(e => (e.subject || '').toLowerCase().includes(kw.split(' ')[0]));
+      }
+    } catch {}
+
+    const found = mydisEvent || iwsEvent || personalEvent;
+    if (!found) {
+      return waSend('I could not find "' + keyword + '" in your calendar for the next 90 days 🔍');
+    }
+    const start = found.start ? found.start.dateTime : found.startTime;
+    const dateStr = new Date(start).toLocaleString('en-GB', {
+      timeZone: 'Europe/London', weekday: 'long', day: 'numeric',
+      month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    const loc = found.location ? (found.location.displayName || found.location) : null;
+    const msg = '📅 Found it!\n\n' + (found.subject || found.title || keyword) +
+      '\n🗓 ' + dateStr + (loc ? '\n📍 ' + loc : '');
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  } catch (err) {
+    return waSend('Had trouble searching 😕 — ' + err.message);
+  }
 }
 
 module.exports = { handleInbound };

@@ -35,6 +35,37 @@ const DELEGATES = {
   if (lastTravel && lastTravel.rule === '__travelling__') global.PENELOPE_TRAVELLING = true;
 })();
 
+
+// Pre-filter: catch obvious intents before sending to Claude
+// This prevents the AI from misclassifying common patterns
+function preFilterIntent(text) {
+  const t = text.toLowerCase().trim();
+
+  // Compose email patterns — must match BEFORE checking for "send"
+  const composePatterns = [
+    /^(can we |could you |please )?(email|message|text|send (an )?email to|write to|contact|let .+ know|tell .+ that|ask .+ (if|to|about|whether))/,
+    /^(can you )?(send|write|draft|compose) (an? )?(email|message) to /,
+    /(email|message) (lilian|craig|hamid|falak|adegoke|ade|basat|bas|shams|al|jan|kamran|faz|jane|nadeem|colin|ketan|florin|gemma|omar)/i,
+  ];
+  for (const p of composePatterns) {
+    if (p.test(t)) return 'compose_email';
+  }
+
+  // Update calendar patterns
+  const updateCalPatterns = [
+    /(change|move|update|reschedule|shift) .*(meeting|call|calendar|invite|event|mastermind|standup)/,
+    /(meeting|call|calendar|invite|event|mastermind|standup).*(change|move|update|reschedule|to \d)/,
+  ];
+  for (const p of updateCalPatterns) {
+    if (p.test(t)) return 'update_calendar_event';
+  }
+
+  // "send" ONLY when it's the first word alone
+  if (/^send(\s*$|\s+draft|\s+it|\s+that|\s+this)/.test(t)) return 'send';
+
+  return null; // let Claude decide
+}
+
 async function handleInbound(text) {
   console.log('[router] received:', text);
   store.saveConversationTurn('user', text);

@@ -195,11 +195,20 @@ async function replyToEmail(messageId, replyText, account) {
 async function sendEmail(opts, account) {
   const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
   const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
+  // Support single address (string) or multiple (array of {email, name} or strings)
+  let toRecipients;
+  if (Array.isArray(opts.to)) {
+    toRecipients = opts.to.map(r => ({
+      emailAddress: typeof r === 'string' ? { address: r } : { address: r.email, name: r.name || '' }
+    }));
+  } else {
+    toRecipients = [{ emailAddress: { address: opts.to } }];
+  }
   await graphPost('/users/' + email + '/sendMail', {
     message: {
       subject: opts.subject,
       body: { contentType: 'Text', content: opts.body },
-      toRecipients: [{ emailAddress: { address: opts.to } }],
+      toRecipients,
     },
     saveToSentItems: true,
   }, tokenFn);

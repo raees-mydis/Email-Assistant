@@ -262,6 +262,14 @@ What would you like to do?</div>
       <input class="url-input" id="url-in" type="url" oninput="cfg.backendUrl=this.value;saveC()">
     </div>
 
+    <div class="srow">
+      <div><div class="srow-label">Biometric login</div><div class="srow-sub">Use fingerprint or Face ID instead of PIN</div></div>
+      <button onclick="setupBiometric();closeSettings()" style="padding:7px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--accent-soft);color:var(--accent);font-size:13px;cursor:pointer">Set up</button>
+    </div>
+    <div class="srow">
+      <div><div class="srow-label">Remove biometric</div><div class="srow-sub">Go back to PIN only</div></div>
+      <button onclick="localStorage.removeItem('pen_bio_cred');alert('Biometric removed — PIN only from now on');closeSettings()" style="padding:7px 14px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface2);color:var(--text2);font-size:13px;cursor:pointer">Remove</button>
+    </div>
     <button class="close-sheet" onclick="closeSettings()">Done</button>
   </div>
 </div>

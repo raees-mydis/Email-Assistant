@@ -253,7 +253,7 @@ async function getCalendarEvents(offsetDays) {
           startDateTime: start, endDateTime: end,
           '$select': 'subject,start,end,location,attendees,bodyPreview,isAllDay,isCancelled,showAs,organizer',
           '$orderby': 'start/dateTime', '$top': 20,
-        }, getMydisToken);
+        }, getMydisToken, { 'Prefer': 'outlook.timezone="Europe/London"' });
         const events = (data.value || [])
           .filter(e => !e.isCancelled && e.showAs !== 'free')
           .map(e => ({ ...mapEvent(e), calendarName: cal.name }));

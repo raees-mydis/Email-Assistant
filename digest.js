@@ -20,7 +20,21 @@ const IWS_FILTER_DOMAINS = [
   'creditsafe', 'payhawk', 'procontract', 'etendersni', 'delta-esourcing',
   'hse.gov.uk', 'hseni', 'find-tender', 'contracts finder', 'supplierregistration',
   'etenders', 'procurement', 'tendersni', 'sell2wales', 'publiccontractsscotland',
+  'bigchange', 'jobwatch', 'raisinhr', 'breathehr', 'xero', 'sage',
 ];
+
+const IWS_FILTER_SUBJECTS = [
+  'purchase order', 'po approval', 'expense', 'vat reminder', 'direct debit',
+  'statement of account', 'payment reminder', 'invoice due',
+];
+
+function filterIwsEmailExtended(email) {
+  const from = (email.from || '').toLowerCase();
+  const name = (email.fromName || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  return IWS_FILTER_DOMAINS.some(d => from.includes(d) || name.includes(d)) ||
+    IWS_FILTER_SUBJECTS.some(s => subject.includes(s));
+}
 
 function filterIwsEmail(email) {
   const from = (email.from || '').toLowerCase();
@@ -49,7 +63,7 @@ async function runDigest() {
     const mydisInbound = mydisEmails.filter(e => !e.from.toLowerCase().includes(userEmail));
     const iwsInbound   = iwsEmails
       .filter(e => !e.from.toLowerCase().includes('raees@iwsuk.com'))
-      .filter(e => !filterIwsEmail(e)); // filter noise before Claude sees it
+      .filter(e => !filterIwsEmail(e)).filter(e => !filterIwsEmailExtended(e)); // filter noise before Claude sees it
 
     console.log('[digest] MYDIS:', mydisInbound.length, '| IWS:', iwsInbound.length);
 

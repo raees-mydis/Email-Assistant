@@ -135,7 +135,7 @@ async function summariseEmails(emails, stakeholders, accountLabel, vips, rules) 
     ? '\n\nSTAKEHOLDER ASSIGNMENTS:\n' + Object.entries(stakeholders).map(([k,v]) => k + ' -> ' + v).join('\n')
     : '';
 
-  const iwsContext = isIws ? '\n\nIMPORTANT: This is the IWS account (raees@iwsuk.com). Apply the same filtering rules as MYDIS — silently filter cold sales outreach, grant writing services, recruitment spam, newsletters, automated notifications. Only show emails from real people on actual work matters.' : '';
+  const iwsContext = isIws ? '\n\nIMPORTANT: This is the IWS account (raees@iwsuk.com). Silently filter: cold sales, recruitment, newsletters, automated system notifications, BigChange/Jobwatch system alerts, purchase order system notifications, Payhawk expense notifications, Creditsafe alerts, tender notifications. NEVER mention filtered emails. Only show emails from real people requiring Raees attention.' : '';
 
   const formatPrompt = `Process these emails for Raees${accountLabel ? ' (' + accountLabel + ' inbox)' : ''}.
 

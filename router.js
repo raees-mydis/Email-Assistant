@@ -400,6 +400,9 @@ async function processIntent(parsed, intentCount, text) {
     case 'calendar_search':
       return handleCalendarSearch(parsed.itemReference || parsed.content || text);
 
+    case 'calendar_free':
+      return handleCalendarFree(parsed.itemReference || parsed.content || text);
+
     case 'reply':
       return handleReply(parsed.emailIndex, parsed.content, parsed.personName, parsed.useExact);
 
@@ -1309,6 +1312,82 @@ async function handleCreateTask(taskContent, sectionHint, originalText) {
     return waSend(msg);
   } catch (err) {
     return waSend('Had trouble adding that to Todoist 😕 — ' + err.message);
+  }
+}
+
+async function handleCalendarFree(queryText) {
+  await waSend('Checking your calendar... 📅');
+
+  // Extract the day from the query
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('./config');
+  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const parseResult = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 100,
+    messages: [{ role: 'user', content: 'Today is ' + now + '. From this query: "' + queryText + '" extract the date being asked about. Return ONLY a date in YYYY-MM-DD format. If "next Tuesday" calculate the actual date.' }]
+  });
+  const dateStr = parseResult.content[0].text.trim().match(/\d{4}-\d{2}-\d{2}/)?.[0];
+
+  if (!dateStr) return waSend('Which day are you asking about? 📅');
+
+  try {
+    const offsetDays = Math.round((new Date(dateStr) - new Date().setHours(0,0,0,0)) / 86400000);
+    const events = await graph.getCombinedCalendarEvents(offsetDays);
+    const dayLabel = new Date(dateStr).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long' });
+
+    if (!events.length) {
+      const msg = '📅 ' + dayLabel + ' is completely free! 🎉\n\nWould you like to book something?';
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
+    }
+
+    // Work out free slots between 8am and 6pm
+    const busySlots = events
+      .filter(e => !e.isAllDay && e.startTime)
+      .map(e => ({
+        start: new Date(e.startTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }),
+        end: new Date(e.endTime).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }),
+        title: e.subject,
+      }));
+
+    const busyLines = busySlots.map(s => '🔴 ' + s.start + ' - ' + s.end + ' — ' + s.title).join('\n');
+
+    // Find free slots (simple gaps between meetings)
+    const sorted = events.filter(e => !e.isAllDay && e.startTime).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    const freeSlots = [];
+    let cursor = new Date(dateStr + 'T08:00:00');
+    const endOfDay = new Date(dateStr + 'T18:00:00');
+
+    for (const e of sorted) {
+      const eStart = new Date(e.startTime);
+      const eEnd = new Date(e.endTime);
+      const gapMins = (eStart - cursor) / 60000;
+      if (gapMins >= 30) {
+        freeSlots.push(
+          cursor.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) +
+          ' - ' +
+          eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' })
+        );
+      }
+      if (eEnd > cursor) cursor = eEnd;
+    }
+    if ((endOfDay - cursor) / 60000 >= 30) {
+      freeSlots.push(
+        cursor.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' - 18:00'
+      );
+    }
+
+    const freeLines = freeSlots.length
+      ? '\n\n✅ Free slots:\n' + freeSlots.map(s => '🟢 ' + s).join('\n')
+      : '\n\nNo significant free slots found.';
+
+    const msg = '📅 ' + dayLabel + '\n\nBusy:\n' + busyLines + freeLines + '\n\nSay "book [time] for 1h with [person]" to schedule something.';
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  } catch (err) {
+    return waSend('Had trouble checking that 😕 — ' + err.message);
   }
 }
 

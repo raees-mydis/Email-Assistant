@@ -75,7 +75,8 @@ function preFilterIntent(text) {
 
   // Update existing calendar event — must have explicit change/move/reschedule language
   // "book/schedule/set up/arrange a meeting" are NEW events, not updates
-  const isNewMeeting = /^(can we |could you |please |let's )?(book|schedule|set up|arrange|create|add|organise|organize) (a |an )?(meeting|call|catch.?up|session)/i.test(text);
+  const isNewMeeting = /^(can we |can you |could you |please |let's )?(book|schedule|set up|arrange|create|add|organise|organize) (a |an )?(meeting|call|catch.?up|session)/i.test(text) ||
+    /^(i need (to |a )|can we |can you |could you ).*(meeting|call|catch.?up|session).*(with|for|on|at)/i.test(text);
 
   const isUpdateCal = !isNewMeeting && (
     /(change|move|update|reschedule|shift|push|propose).+(meeting|call|calendar|invite|mastermind|standup|event)/i.test(text) ||

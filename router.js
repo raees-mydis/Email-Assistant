@@ -445,7 +445,7 @@ async function processIntent(parsed, intentCount, text) {
       return handleUpdateCalendarEvent(parsed.itemReference || parsed.content, parsed.content, text, intentCount > 1);
 
     case 'calendar_add':
-      return handleCalendarAdd(parsed.content || text || '', parsed.calendarName);
+      return handleCalendarAdd(parsed.content || text || '', parsed.calendarName, parsed.skipTaskCheck);
 
     case 'day_summary_today':
       return handleDaySummary(0);

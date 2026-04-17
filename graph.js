@@ -418,22 +418,31 @@ async function createCalendarEvent(opts, account) {
 }
 
 async function searchContacts(name, account) {
-  const email = account === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
-  const tokenFn = account === 'iws' ? getIwsToken : getMydisToken;
-  try {
-    const data = await graphGet('/users/' + email + '/contacts', {
-      '$search': '"' + name + '"',
-      '$select': 'displayName,emailAddresses',
-      '$top': 5,
-    }, tokenFn);
-    return (data.value || []).map(c => ({
-      name: c.displayName,
-      email: c.emailAddresses && c.emailAddresses.length ? c.emailAddresses[0].address : null,
-    })).filter(c => c.email);
-  } catch (err) {
-    console.error('[graph] searchContacts error:', err.message);
-    return [];
+  // Search both MYDIS and IWS contacts
+  const accounts = account ? [account] : ['mydis', 'iws'];
+  for (const acc of accounts) {
+    const emailAddr = acc === 'iws' ? 'raees@iwsuk.com' : config.azure.userEmail;
+    const tokenFn = acc === 'iws' ? getIwsToken : getMydisToken;
+    try {
+      const data = await graphGet('/users/' + emailAddr + '/contacts', {
+        '$search': '"' + name + '"',
+        '$select': 'displayName,emailAddresses,companyName',
+        '$top': 5,
+      }, tokenFn);
+      const results = (data.value || []).map(c => ({
+        name: c.displayName,
+        email: c.emailAddresses && c.emailAddresses.length ? c.emailAddresses[0].address : null,
+        company: c.companyName || '',
+      })).filter(c => c.email);
+      if (results.length > 0) {
+        console.log('[graph] found', name, 'in contacts:', results[0].email);
+        return results;
+      }
+    } catch (err) {
+      console.error('[graph] searchContacts error for', acc, ':', err.message);
+    }
   }
+  return [];
 }
 
 async function resolveAttendees(names, session) {
@@ -520,9 +529,9 @@ async function resolveAttendees(names, session) {
       continue;
     }
 
-    // 5. Search Microsoft contacts
+    // 5. Search Microsoft contacts (both MYDIS and IWS)
     try {
-      const contacts = await searchContacts(name, 'mydis');
+      const contacts = await searchContacts(name, null); // search both
       if (contacts.length > 0) {
         console.log('[attendee] resolved', name, 'from contacts to', contacts[0].email);
         resolved.push(contacts[0].email);

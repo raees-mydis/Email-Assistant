@@ -122,6 +122,23 @@ async function handleInbound(text) {
   console.log('[router] received:', text);
   store.saveConversationTurn('user', text);
 
+  // Detect forwarded/shared message — WhatsApp forwards start with sender info or quoted text
+  const looksForwarded = (
+    /^(Forwarded message|---------- Forwarded)/i.test(text) ||
+    (text.includes('\n') && text.length > 200)
+  ) && !store.getPendingDraft();
+
+  if (looksForwarded && !store.getPendingDraft()) {
+    // Check if it looks like a forwarded chat (multiple lines, no clear command)
+    const hasCommand = /^(update|reply|send|task|delegate|book|schedule|email|add|create|when|what|can you|can we|could)/i.test(text.trim());
+    if (!hasCommand) {
+      store.savePendingDraft({ type: 'forwarded_context', context: text, awaitingInstruction: true });
+      const msg = 'Got it — I can see the forwarded message. What would you like me to do with this? 📋\n\nFor example: "reply", "add as task", "summarise", "email Hamid about this"';
+      store.saveConversationTurn('penelope', msg);
+      return waSend(msg);
+    }
+  }
+
   // "cancel" always clears pending draft first
   const lowerText = text.toLowerCase().trim();
   if (lowerText === 'cancel' || lowerText === 'cancel that' || lowerText === 'never mind' || lowerText === 'nevermind') {
@@ -163,6 +180,14 @@ async function handleInbound(text) {
       return waSend(doneMsg);
     }
     // "edit" falls through to handleEdit
+  }
+
+  // Handle forwarded message instruction
+  if (draft && draft.awaitingInstruction && draft.type === 'forwarded_context') {
+    store.clearPendingDraft();
+    // Re-process with the forwarded content as context
+    const combinedText = text + '\n\n[Context from forwarded message]:\n' + draft.context;
+    return handleInbound(combinedText);
   }
 
   // Handle organiser decision
@@ -427,6 +452,9 @@ async function processIntent(parsed, intentCount, text) {
 
     case 'add_vip':
       return handleAddVip(parsed.personName, parsed.content);
+
+    case 'create_task':
+      return handleCreateTask(parsed.content, parsed.sectionHint, text);
 
     case 'remember_rule':
       return handleRememberRule(parsed.content);
@@ -1199,6 +1227,48 @@ async function handleCalendarSearch(keyword) {
     return waSend(msg);
   } catch (err) {
     return waSend('Had trouble searching 😕 — ' + err.message);
+  }
+}
+
+async function handleCreateTask(taskContent, sectionHint, originalText) {
+  if (!taskContent && !originalText) return waSend('What task should I add? 📋');
+
+  // Use Claude to extract a clean task description from the natural language request
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('./config');
+  const client = new Anthropic({ apiKey: config.anthropic.apiKey });
+
+  const result = await client.messages.create({
+    model: 'claude-sonnet-4-5', max_tokens: 200,
+    messages: [{ role: 'user', content: 'Extract a Todoist task from this request: "' + (taskContent || originalText) + '"\n\nReturn ONLY valid JSON:\n{ "title": "concise task title (max 80 chars)", "description": "more detail if needed (max 150 chars)", "due_string": "today or specific date if mentioned", "section": "section name if mentioned, otherwise null" }\n\nFor section: if user says "under Sales" use "Sales", "Operations" use "Operations" etc. If not mentioned return null.' }]
+  });
+
+  let parsed;
+  try {
+    const raw = result.content[0].text.trim();
+    const m = raw.match(/\{[\s\S]*\}/);
+    parsed = m ? JSON.parse(m[0]) : null;
+  } catch { parsed = null; }
+
+  const title = parsed ? parsed.title : (taskContent || originalText).slice(0, 80);
+  const description = parsed ? parsed.description : '';
+  const dueString = parsed ? (parsed.due_string || 'today') : 'today';
+  const section = sectionHint || (parsed ? parsed.section : null) || 'operations';
+
+  try {
+    const task = await todoist.createTask({
+      content: title,
+      description,
+      due_string: dueString,
+      section,
+      priority: 2,
+    });
+    const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
+    const msg = 'Done! ✅ Task added to ' + sectionLabel + ':\n"' + title + '"\nDue: ' + dueString;
+    store.saveConversationTurn('penelope', msg);
+    return waSend(msg);
+  } catch (err) {
+    return waSend('Had trouble adding that to Todoist 😕 — ' + err.message);
   }
 }
 

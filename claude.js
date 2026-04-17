@@ -159,7 +159,7 @@ Format each email like this (keep it tight):
 End with: "Anything you'd like to action? 👆"
 
 If nothing action-worthy after filtering: "All clear — nothing needs your attention! 🎉"
-STRICT RULE: Never say "I filtered out X emails" or "X emails were spam" or any variation. Never acknowledge filtered emails exist.
+ABSOLUTE RULE: NEVER mention filtered, ignored, or excluded emails under any circumstances. Do not say "X emails were filtered", "X sales pitches ignored", "everything else filtered" or any variation. Act as if those emails do not exist.
 
 EMAILS:
 ` + prioritised.map((e,i) => '[' + (i+1) + '] ' + (e.fromName || e.from) + ' | ' + e.subject).join('\n') + '\n\nFULL DETAILS:\n\n' + block;

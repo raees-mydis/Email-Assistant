@@ -110,6 +110,18 @@ function preFilterIntent(text) {
     results.push({ intent: 'calendar_search', itemReference: text, content: text });
   }
 
+  // Standalone task creation — "add a task", "create a task", "remind me to"
+  const isCreateTask = /^(add|create|make|put|set up|remind me to|can you add) (a |an )?(task|reminder|todo|to-do)/i.test(text) ||
+    /^(add|create).+(task|todoist|to-do|under (sales|operations|finance|admin|marketing|hr))/i.test(text) ||
+    /under (sales|operations|finance|admin|marketing|hr).*(task|remind|add|create)/i.test(text);
+
+  if (isCreateTask && results.length === 0) {
+    // Extract section hint from text
+    const sectionMatch = text.match(/under (\w+)/i);
+    const sectionHint = sectionMatch ? sectionMatch[1].toLowerCase() : null;
+    results.push({ intent: 'create_task', content: text, sectionHint });
+  }
+
   // "send" ONLY as standalone command (only if nothing else matched)
   if (results.length === 0 && /^send(\s*$|\s+(it|that|this|draft|the draft))/i.test(t)) {
     results.push({ intent: 'send' });

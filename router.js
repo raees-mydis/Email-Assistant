@@ -90,14 +90,14 @@ function preFilterIntent(text) {
 
   // New meeting/event booking
   if (isNewMeeting && !isCompose) {
-    results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null });
+    results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null, skipTaskCheck: true });
   }
 
   // Calendar add with personal flag
   const isCalAdd = /(add|put|schedule|create|book).+(calendar|appointment|event|meeting)/i.test(text) && !isUpdateCal && !isCompose;
   if (isCalAdd || isPersonalCal) {
     if (!results.some(r => r.intent === 'calendar_add' || r.intent === 'update_calendar_event')) {
-      results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null });
+      results.push({ intent: 'calendar_add', content: text, calendarName: isPersonalCal ? 'personal' : null, skipTaskCheck: true });
     }
   }
 

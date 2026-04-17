@@ -417,6 +417,54 @@ async function createCalendarEvent(opts, account) {
   }
 }
 
+async function searchEmailsForPerson(name) {
+  // Search sent + inbox across both accounts to find someone's email address
+  const accounts = [
+    { email: config.azure.userEmail, tokenFn: getMydisToken },
+    { email: 'raees@iwsuk.com', tokenFn: getIwsToken },
+  ];
+  const nameParts = name.toLowerCase().split(' ').filter(w => w.length > 2);
+
+  for (const acc of accounts) {
+    // Search sent items first, then inbox
+    for (const folder of ['sentitems', 'inbox']) {
+      try {
+        const data = await graphGet('/users/' + acc.email + '/mailFolders/' + folder + '/messages', {
+          '$search': '"' + name + '"',
+          '$select': 'toRecipients,ccRecipients,from,replyTo',
+          '$top': 10,
+        }, acc.tokenFn);
+
+        const msgs = data.value || [];
+        for (const msg of msgs) {
+          // For sent: look in recipients
+          const recipients = [...(msg.toRecipients || []), ...(msg.ccRecipients || [])];
+          for (const r of recipients) {
+            const rName = (r.emailAddress && r.emailAddress.name || '').toLowerCase();
+            const rEmail = (r.emailAddress && r.emailAddress.address || '').toLowerCase();
+            if (nameParts.some(w => rName.includes(w)) || nameParts.some(w => rEmail.split('@')[0].includes(w))) {
+              console.log('[attendee] found', name, 'in', folder, ':', r.emailAddress.address);
+              return r.emailAddress.address;
+            }
+          }
+          // For inbox: look at the sender
+          if (folder === 'inbox' && msg.from) {
+            const fName = (msg.from.emailAddress && msg.from.emailAddress.name || '').toLowerCase();
+            const fEmail = (msg.from.emailAddress && msg.from.emailAddress.address || '').toLowerCase();
+            if (nameParts.some(w => fName.includes(w)) || nameParts.some(w => fEmail.split('@')[0].includes(w))) {
+              console.log('[attendee] found', name, 'in inbox sender:', msg.from.emailAddress.address);
+              return msg.from.emailAddress.address;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[graph] searchEmailsForPerson error', folder, ':', err.message);
+      }
+    }
+  }
+  return null;
+}
+
 async function searchContacts(name, account) {
   // Search both MYDIS and IWS contacts
   const accounts = account ? [account] : ['mydis', 'iws'];
@@ -539,7 +587,16 @@ async function resolveAttendees(names, session) {
       }
     } catch {}
 
-    // 6. Unresolved — keep name as placeholder
+    // 6. Search sent emails + inbox across both accounts
+    try {
+      const foundEmail = await searchEmailsForPerson(name);
+      if (foundEmail) {
+        resolved.push(foundEmail);
+        continue;
+      }
+    } catch {}
+
+    // 7. Unresolved — keep name as placeholder
     console.log('[attendee] could not resolve', name);
     resolved.push(name + ' (email not found — say "add [name] as VIP" after emailing them)');
   }

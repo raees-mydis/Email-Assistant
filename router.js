@@ -1061,15 +1061,43 @@ async function handleComposeEmail(recipientNames, topic, originalText, autoSend)
   const names = recipientNames.split(/,|and/).map(n => n.trim().toLowerCase()).filter(Boolean);
   const resolved = [], unresolved = [];
   for (const name of names) {
+    // 1. MYDIS team map
     const teamEmail = TEAM_MAP[name];
-    if (teamEmail) { resolved.push({ name, email: teamEmail }); continue; }
+    if (teamEmail) { resolved.push({ name: name.charAt(0).toUpperCase() + name.slice(1), email: teamEmail }); continue; }
+
+    // 2. Session emails (current inbox)
     if (session) {
-      const found = session.emails.find(e => (e.fromName || '').toLowerCase().includes(name) || e.from.toLowerCase().includes(name));
+      const found = session.emails.find(e =>
+        (e.fromName || '').toLowerCase().includes(name) || e.from.toLowerCase().includes(name)
+      );
       if (found) { resolved.push({ name: found.fromName || found.from, email: found.from }); continue; }
     }
+
+    // 3. VIP contacts
+    const vips = store.getVips();
+    const vipMatch = Object.values(vips || {}).find(v => (v.name || '').toLowerCase().includes(name));
+    if (vipMatch && vipMatch.email) { resolved.push({ name: vipMatch.name || name, email: vipMatch.email }); continue; }
+
+    // 4. Microsoft contacts
+    try {
+      const contacts = await graph.searchContacts(name, null);
+      if (contacts.length > 0) { resolved.push({ name: contacts[0].name || name, email: contacts[0].email }); continue; }
+    } catch {}
+
+    // 5. Search sent + inbox emails
+    try {
+      const foundEmail = await graph.searchEmailsForPerson(name);
+      if (foundEmail) {
+        resolved.push({ name: name.charAt(0).toUpperCase() + name.slice(1), email: foundEmail });
+        continue;
+      }
+    } catch {}
+
     unresolved.push(name);
   }
-  if (unresolved.length > 0) return waSend('I could not find email addresses for: ' + unresolved.join(', ') + '\n\nTry their full name or add them as a VIP.');
+  if (unresolved.length > 0) {
+    return waSend('I could not find email addresses for: ' + unresolved.join(', ') + '\n\nTry their full name, or say "add [name] as VIP" after emailing them once.');
+  }
   await waSend('Sure Raees, drafting that now... ✍️');
   await new Promise(r => setTimeout(r, 800));
   const Anthropic = require('@anthropic-ai/sdk');

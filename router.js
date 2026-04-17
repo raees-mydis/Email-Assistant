@@ -1269,11 +1269,10 @@ async function handleCreateTask(taskContent, sectionHint, originalText) {
 
   try {
     const task = await todoist.createTask({
-      content: title,
+      title,
       description,
       due_string: dueString,
       section,
-      priority: 2,
     });
     const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1);
     const msg = 'Done! ✅ Task added to ' + sectionLabel + ':\n"' + title + '"\nDue: ' + dueString;

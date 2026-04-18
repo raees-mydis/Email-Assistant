@@ -985,6 +985,7 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
     const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
     const loc = eventData.location ? '\n📍 ' + eventData.location : '';
     const acct = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
+    console.log('[calendar] using account:', eventData.account, '| calendarName:', eventData.calendarName || 'none');
     const attendeeNote = eventData.attendees && eventData.attendees.length
       ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
       : '';

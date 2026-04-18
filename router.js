@@ -1035,7 +1035,41 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
       }
     }
 
-    // Step 2: Build confirmation message with resolved data
+    // Step 2: Check for clashes and nearby meetings
+    let clashNote = '';
+    try {
+      const eventStart = new Date(eventData.start);
+      const eventEnd = new Date(eventData.end);
+      const offsetDays = Math.round((eventStart - new Date().setHours(0,0,0,0)) / 86400000);
+      const dayEvents = await graph.getCombinedCalendarEvents(offsetDays);
+
+      const clashes = [], nearby = [];
+      for (const e of dayEvents) {
+        if (!e.startTime) continue;
+        const eStart = new Date(e.startTime);
+        const eEnd = new Date(e.endTime);
+        // Check overlap
+        if (eStart < eventEnd && eEnd > eventStart) {
+          clashes.push(e.subject + ' (' +
+            eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) +
+            ' - ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ')');
+        } else {
+          // Check if within 30 mins before or after
+          const gapBefore = (eventStart - eEnd) / 60000;
+          const gapAfter = (eStart - eventEnd) / 60000;
+          if (gapBefore >= 0 && gapBefore <= 30) {
+            nearby.push('📅 Ends ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' — ' + e.subject + ' (just before)');
+          }
+          if (gapAfter >= 0 && gapAfter <= 30) {
+            nearby.push('📅 Starts ' + eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' — ' + e.subject + ' (just after)');
+          }
+        }
+      }
+      if (clashes.length) clashNote += '\n\n⚠️ CLASH with: ' + clashes.join(', ');
+      if (nearby.length) clashNote += '\n\n⏰ Nearby meetings:\n' + nearby.join('\n');
+    } catch (err) { console.error('[calendar] clash check error:', err.message); }
+
+    // Step 3: Build confirmation message with resolved data
     const startStr = new Date(eventData.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
     const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
     const loc = eventData.location ? '\n📍 ' + eventData.location : '';
@@ -1043,7 +1077,7 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
     const attendeeNote = eventData.attendees && eventData.attendees.length
       ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
       : '';
-    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
+    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + clashNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
 
     // Step 3: Ask about Teams link if meeting has attendees and not in-person
     const needsOnlineCheck = eventData.attendees && eventData.attendees.length > 0 && !eventData.onlineMeeting;

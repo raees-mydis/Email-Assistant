@@ -1003,15 +1003,31 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
         const resolved = await graph.resolveAttendees(eventData.attendees, session);
         eventData.attendees = resolved;
         console.log('[calendar] resolved attendees:', resolved);
-        // Auto-detect IWS account
+        // Auto-detect IWS account — check session emails AND search results
         if (!calendarNameHint && eventData.account !== 'iws') {
           const iwsEmails = (session && session.emails || []).filter(e => e.account === 'iws');
-          const foundInIws = resolved.some(email =>
-            iwsEmails.some(e => e.from.toLowerCase() === (email || '').toLowerCase())
-          );
+          const foundInIws = resolved.some(email => {
+            const emailLower = (email || '').toLowerCase();
+            // Check if this email appeared in IWS inbox
+            return iwsEmails.some(e => e.from.toLowerCase() === emailLower);
+          });
           if (foundInIws) {
             eventData.account = 'iws';
-            console.log('[calendar] auto-routing to IWS calendar');
+            console.log('[calendar] auto-routing to IWS calendar based on session');
+          } else {
+            // Also check if any resolved email is from a known IWS-only domain
+            // by searching IWS sent items
+            try {
+              for (const email of resolved) {
+                if (!email.includes('@')) continue;
+                const iwsSent = await graph.searchEmailsInFolder('raees@iwsuk.com', email.split('@')[1], 'sentitems');
+                if (iwsSent) {
+                  eventData.account = 'iws';
+                  console.log('[calendar] auto-routing to IWS calendar based on sent emails');
+                  break;
+                }
+              }
+            } catch {}
           }
         }
       } catch (err) {

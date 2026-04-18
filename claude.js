@@ -443,7 +443,18 @@ async function parseCalendarEvent(text, conversation) {
 
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-5', max_tokens: 300,
-    messages: [{ role: 'user', content: 'Current date/time in UK (Europe/London): ' + now + '\nToday is: ' + new Date().toLocaleString('en-GB', {timeZone:'Europe/London',weekday:'long',day:'numeric',month:'long'}) + '\n\nRecent conversation:\n' + recentConvo + '\n\nExtract calendar event details from this request: "' + text + '"\n\nReturn ONLY valid JSON:\n{ "title": "event title", "start": "ISO8601 datetime", "end": "ISO8601 datetime", "location": null or string, "notes": null or string, "attendees": [], "account": "mydis", "calendarName": null or string }\n\nCRITICAL TIMEZONE RULES:\n- start and end must be LOCAL UK time (Europe/London / BST), NOT UTC\n- Format: 2026-04-17T19:30:00 (no Z suffix, no UTC offset — just bare local datetime)\n- Never convert to UTC — output the time EXACTLY as stated\n- If no end time given, assume 1 hour after start\n- If no date given, assume today\n- For day names: calculate from the current date/time provided above. Use that exact date as "today" and count forward correctly\n- CRITICAL: "Monday" means the NEXT Monday after today — double-check the day of week before outputting\n- account: use "iws" only if IWS is mentioned, otherwise "mydis"\n- calendarName: set to "personal" if user mentions personal calendar, home calendar, or Outlook personal. Otherwise null.\n- attendees: extract ONLY the names of people to invite as strings — do NOT guess email addresses. Return names exactly as mentioned e.g. ["Gemma", "Hamid"]. The system will resolve emails from context.' }]
+    messages: [{ role: 'user', content: 'Current date/time in UK (Europe/London): ' + now + '\n' + (function() {
+  const tz = 'Europe/London';
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const today = new Date();
+  const lines = ['Today is: ' + today.toLocaleDateString("en-GB", {timeZone:tz, weekday:"long", day:"numeric", month:"long", year:"numeric"})];
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(today); d.setDate(today.getDate() + i);
+    const ukDate = d.toLocaleDateString("en-GB", {timeZone:tz, weekday:"long", day:"numeric", month:"long"});
+    lines.push(ukDate);
+  }
+  return lines.join("\n");
+})() + '\n\nRecent conversation:\n' + recentConvo + '\n\nExtract calendar event details from this request: "' + text + '"\n\nReturn ONLY valid JSON:\n{ "title": "event title", "start": "ISO8601 datetime", "end": "ISO8601 datetime", "location": null or string, "notes": null or string, "attendees": [], "account": "mydis", "calendarName": null or string }\n\nCRITICAL TIMEZONE RULES:\n- start and end must be LOCAL UK time (Europe/London / BST), NOT UTC\n- Format: 2026-04-17T19:30:00 (no Z suffix, no UTC offset — just bare local datetime)\n- Never convert to UTC — output the time EXACTLY as stated\n- If no end time given, assume 1 hour after start\n- If no date given, assume today\n- For day names: calculate from the current date/time provided above. Use that exact date as "today" and count forward correctly\n- CRITICAL: "Monday" means the NEXT Monday after today — double-check the day of week before outputting\n- account: use "iws" only if IWS is mentioned, otherwise "mydis"\n- calendarName: set to "personal" if user mentions personal calendar, home calendar, or Outlook personal. Otherwise null.\n- attendees: extract ONLY the names of people to invite as strings — do NOT guess email addresses. Return names exactly as mentioned e.g. ["Gemma", "Hamid"]. The system will resolve emails from context.' }]
   });
 
   try {

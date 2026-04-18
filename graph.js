@@ -419,6 +419,19 @@ async function createCalendarEvent(opts, account) {
   }
 }
 
+async function searchEmailsInFolder(userEmail, domain, folder) {
+  // Check if user has sent/received emails from a given domain in a specific folder
+  const tokenFn = userEmail.includes('iwsuk') ? getIwsToken : getMydisToken;
+  try {
+    const data = await graphGet('/users/' + userEmail + '/mailFolders/' + folder + '/messages', {
+      '$filter': "contains(from/emailAddress/address, '@" + domain + "')",
+      '$top': 1,
+      '$select': 'id',
+    }, tokenFn);
+    return (data.value || []).length > 0;
+  } catch { return false; }
+}
+
 async function searchEmailsForPerson(name) {
   // Search sent + inbox across both accounts to find someone's email address
   const accounts = [
@@ -606,7 +619,7 @@ async function resolveAttendees(names, session) {
 }
 
 module.exports = {
-  searchContacts, resolveAttendees,
+  searchContacts, resolveAttendees, searchEmailsInFolder,
   getUnreadEmails, getIwsUnreadEmails,
   getRecentEmails, getIwsRecentEmails,
   getThreadTeamReplies, getAttachments,

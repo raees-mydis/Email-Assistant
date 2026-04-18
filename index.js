@@ -127,4 +127,25 @@ app.listen(PORT, '0.0.0.0', () => {
       console.log('    [cron]', trimmed);
     }
   });
+
+  // Auto-rejoin Twilio sandbox every 60 hours to prevent expiry
+  // Sandbox lasts 72h — we rejoin at 60h to stay safe
+  const SANDBOX_NAME = process.env.TWILIO_SANDBOX_NAME;
+  if (SANDBOX_NAME) {
+    cron.schedule('0 */60 * * *', async () => {
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        await client.messages.create({
+          from: 'whatsapp:' + process.env.YOUR_WHATSAPP_NUMBER,
+          to: 'whatsapp:+14155238886',
+          body: 'join ' + SANDBOX_NAME,
+        });
+        console.log('[sandbox] Auto-rejoined sandbox:', SANDBOX_NAME);
+      } catch (err) {
+        console.error('[sandbox] Auto-rejoin failed:', err.message);
+      }
+    });
+    console.log('    [sandbox] Auto-rejoin enabled for:', SANDBOX_NAME);
+  }
 });

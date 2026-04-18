@@ -1003,31 +1003,33 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
         const resolved = await graph.resolveAttendees(eventData.attendees, session);
         eventData.attendees = resolved;
         console.log('[calendar] resolved attendees:', resolved);
-        // Auto-detect IWS account — check session emails AND search results
+        // Auto-detect IWS account
         if (!calendarNameHint && eventData.account !== 'iws') {
-          const iwsEmails = (session && session.emails || []).filter(e => e.account === 'iws');
-          const foundInIws = resolved.some(email => {
-            const emailLower = (email || '').toLowerCase();
-            // Check if this email appeared in IWS inbox
-            return iwsEmails.some(e => e.from.toLowerCase() === emailLower);
-          });
-          if (foundInIws) {
+          // Check session emails first
+          const iwsSessionEmails = (session && session.emails || []).filter(e => e.account === 'iws');
+          const foundInIwsSession = resolved.some(email =>
+            iwsSessionEmails.some(e => e.from.toLowerCase() === (email || '').toLowerCase())
+          );
+          if (foundInIwsSession) {
             eventData.account = 'iws';
-            console.log('[calendar] auto-routing to IWS calendar based on session');
+            console.log('[calendar] routing to IWS based on session');
           } else {
-            // Also check if any resolved email is from a known IWS-only domain
-            // by searching IWS sent items
+            // Check IWS sent emails for any of the attendee domains
             try {
               for (const email of resolved) {
-                if (!email.includes('@')) continue;
-                const iwsSent = await graph.searchEmailsInFolder('raees@iwsuk.com', email.split('@')[1], 'sentitems');
-                if (iwsSent) {
+                if (!email.includes('@') || email.includes('email not found')) continue;
+                const domain = email.split('@')[1];
+                const inIwsSent = await graph.searchEmailsInFolder('raees@iwsuk.com', domain, 'sentitems');
+                const inIwsInbox = await graph.searchEmailsInFolder('raees@iwsuk.com', domain, 'inbox');
+                if (inIwsSent || inIwsInbox) {
                   eventData.account = 'iws';
-                  console.log('[calendar] auto-routing to IWS calendar based on sent emails');
+                  console.log('[calendar] routing to IWS based on email history with', domain);
                   break;
                 }
               }
-            } catch {}
+            } catch (err) {
+              console.error('[calendar] IWS domain check error:', err.message);
+            }
           }
         }
       } catch (err) {
@@ -1044,24 +1046,35 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
       const dayEvents = await graph.getCombinedCalendarEvents(offsetDays);
 
       const clashes = [], nearby = [];
+      const newTitle = (eventData.title || '').toLowerCase();
       for (const e of dayEvents) {
         if (!e.startTime) continue;
+        // Skip if it looks like the same event we're creating or a duplicate
+        const existingTitle = (e.subject || '').toLowerCase()
+          .replace(/^\[external:\]\s*/i, '')  // strip [EXTERNAL:] prefix
+          .replace(/invitation:\s*/i, '')        // strip "Invitation:" prefix
+          .replace(/@.*$/i, '')                  // strip @date suffix
+          .trim();
+        const isSameEvent = existingTitle.includes(newTitle) || newTitle.includes(existingTitle.split(' ')[0]);
+        if (isSameEvent) continue;
+
         const eStart = new Date(e.startTime);
         const eEnd = new Date(e.endTime);
+        const cleanSubject = e.subject.replace(/^\[EXTERNAL:\]\s*/i, '').replace(/Invitation:\s*/i, '').split('@')[0].trim();
+
         // Check overlap
         if (eStart < eventEnd && eEnd > eventStart) {
-          clashes.push(e.subject + ' (' +
+          clashes.push(cleanSubject + ' (' +
             eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) +
             ' - ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ')');
         } else {
-          // Check if within 30 mins before or after
           const gapBefore = (eventStart - eEnd) / 60000;
           const gapAfter = (eStart - eventEnd) / 60000;
           if (gapBefore >= 0 && gapBefore <= 30) {
-            nearby.push('📅 Ends ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' — ' + e.subject + ' (just before)');
+            nearby.push('📅 ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' ends — ' + cleanSubject);
           }
           if (gapAfter >= 0 && gapAfter <= 30) {
-            nearby.push('📅 Starts ' + eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' — ' + e.subject + ' (just after)');
+            nearby.push('📅 ' + eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' starts — ' + cleanSubject);
           }
         }
       }

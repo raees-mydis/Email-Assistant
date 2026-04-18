@@ -995,43 +995,47 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
     }
     // Apply calendarName hint from initial request
     if (calendarNameHint) eventData.calendarName = calendarNameHint;
-    const startStr = new Date(eventData.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-    const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
-    const loc = eventData.location ? '\n📍 ' + eventData.location : '';
-    const acct = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
-    console.log('[calendar] using account:', eventData.account, '| calendarName:', eventData.calendarName || 'none');
-    const attendeeNote = eventData.attendees && eventData.attendees.length
-      ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
-      : '';
-    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
-    // Resolve attendee names to emails BEFORE showing confirmation
+
+    // Step 1: Resolve attendees first
     if (eventData.attendees && eventData.attendees.length) {
       try {
         const session = store.getSession();
         const resolved = await graph.resolveAttendees(eventData.attendees, session);
         eventData.attendees = resolved;
         console.log('[calendar] resolved attendees:', resolved);
-        // Rebuild attendeeNote with resolved emails
-        const resolvedNote = resolved.length ? '\n👥 Inviting: ' + resolved.join(', ') : '';
-        // Re-build confirmMsg with resolved attendees
-        const loc2 = eventData.location ? '\n📍 ' + eventData.location : '';
-        const acct2 = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
-        const confirmMsg2 = 'Adding to your calendar' + acct2 + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc2 + resolvedNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
-        store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });
-        store.saveConversationTurn('penelope', confirmMsg2);
-        return waSend(confirmMsg2);
+        // Auto-detect IWS account
+        if (!calendarNameHint && eventData.account !== 'iws') {
+          const iwsEmails = (session && session.emails || []).filter(e => e.account === 'iws');
+          const foundInIws = resolved.some(email =>
+            iwsEmails.some(e => e.from.toLowerCase() === (email || '').toLowerCase())
+          );
+          if (foundInIws) {
+            eventData.account = 'iws';
+            console.log('[calendar] auto-routing to IWS calendar');
+          }
+        }
       } catch (err) {
         console.error('[calendar] attendee resolution error:', err.message);
       }
     }
 
-    // Ask about Teams link if not already specified and it's a meeting with attendees
+    // Step 2: Build confirmation message with resolved data
+    const startStr = new Date(eventData.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const endStr = new Date(eventData.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+    const loc = eventData.location ? '\n📍 ' + eventData.location : '';
+    const acct = eventData.calendarName === 'personal' ? ' [Personal calendar]' : eventData.account === 'iws' ? ' [IWS calendar]' : ' [MYDIS calendar]';
+    const attendeeNote = eventData.attendees && eventData.attendees.length
+      ? '\n👥 Inviting: ' + eventData.attendees.join(', ')
+      : '';
+    const confirmMsg = 'Adding to your calendar' + acct + ':\n\n📅 ' + eventData.title + '\n🕐 ' + startStr + ' — ' + endStr + loc + attendeeNote + '\n\nSay "yes" to confirm or "cancel" to stop.';
+
+    // Step 3: Ask about Teams link if meeting has attendees and not in-person
     const needsOnlineCheck = eventData.attendees && eventData.attendees.length > 0 && !eventData.onlineMeeting;
-    const isObviouslyInPerson = /(site|office|factory|farm|location|address|visit|on.?site|in.?person)/i.test(text || '');
+    const isObviouslyInPerson = /(site|office|factory|farm|location|address|visit|on.?site|in.?person)/i.test(text || '');
 
     if (needsOnlineCheck && !isObviouslyInPerson) {
       store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true, awaitingTeamsCheck: true });
-      const teamsMsg = confirmMsg + '\n\n📹 Add a Teams meeting link? Say "yes", "yes teams", or "no"';
+      const teamsMsg = confirmMsg + '\n\n📹 Add a Teams meeting link? Say "yes teams" or "no"';
       store.saveConversationTurn('penelope', teamsMsg);
       return waSend(teamsMsg);
     }

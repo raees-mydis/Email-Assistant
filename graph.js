@@ -380,6 +380,8 @@ async function createCalendarEvent(opts, account) {
     start: { dateTime: opts.start, timeZone: 'Europe/London' },
     end:   { dateTime: opts.end,   timeZone: 'Europe/London' },
     body:  { contentType: 'Text', content: opts.notes || '' },
+    isOnlineMeeting: opts.onlineMeeting || false,
+    onlineMeetingProvider: opts.onlineMeeting ? 'teamsForBusiness' : 'unknown',
   };
 
   if (opts.location) event.location = { displayName: opts.location };

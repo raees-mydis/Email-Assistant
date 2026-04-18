@@ -274,6 +274,20 @@ async function handleInbound(text) {
   if (draft && draft.awaitingConfirm && (draft.type === 'calendar_event' || draft.type === 'calendar_update')) {
     const lower = text.toLowerCase().trim();
 
+    // Handle Teams link question
+    if (draft.awaitingTeamsCheck) {
+      const wantsTeams = lower === 'yes' || lower.includes('yes') || lower.includes('teams');
+      const declines = lower === 'no' || lower.includes('no teams') || lower.includes('no link');
+      if (wantsTeams || declines) {
+        const updatedEventData = { ...draft.eventData, onlineMeeting: wantsTeams };
+        store.savePendingDraft({ ...draft, eventData: updatedEventData, awaitingTeamsCheck: false });
+        const teamsNote = wantsTeams ? '\n📹 Teams link will be added' : '';
+        const msg = 'Got it! Say "yes" to confirm or "cancel" to stop.' + teamsNote;
+        store.saveConversationTurn('penelope', msg);
+        return waSend(msg);
+      }
+    }
+
     // Allow switching to personal calendar before confirming
     if (lower.includes('personal') || lower.includes('personal calendar') || lower.includes('outlook')) {
       const updatedData = { ...draft.eventData, calendarName: 'personal' };
@@ -1009,6 +1023,17 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
       } catch (err) {
         console.error('[calendar] attendee resolution error:', err.message);
       }
+    }
+
+    // Ask about Teams link if not already specified and it's a meeting with attendees
+    const needsOnlineCheck = eventData.attendees && eventData.attendees.length > 0 && !eventData.onlineMeeting;
+    const isObviouslyInPerson = /(site|office|factory|farm|location|address|visit|on.?site|in.?person)/i.test(text || '');
+
+    if (needsOnlineCheck && !isObviouslyInPerson) {
+      store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true, awaitingTeamsCheck: true });
+      const teamsMsg = confirmMsg + '\n\n📹 Add a Teams meeting link? Say "yes", "yes teams", or "no"';
+      store.saveConversationTurn('penelope', teamsMsg);
+      return waSend(teamsMsg);
     }
 
     store.savePendingDraft({ type: 'calendar_event', eventData, awaitingConfirm: true });

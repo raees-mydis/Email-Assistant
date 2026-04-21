@@ -315,6 +315,11 @@ async function handleInbound(text) {
         store.savePendingDraft({ ...draft, eventData: updated });
         const startStr = new Date(updated.start).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
         const endStr = new Date(updated.end).toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+        // Handle explicit calendar override in correction
+        if (/mydis/i.test(text)) updated.account = 'mydis';
+        else if (/iws/i.test(text)) updated.account = 'iws';
+        else if (/personal/i.test(text)) { updated.calendarName = 'personal'; }
+
         // Re-resolve attendees if they changed
         if (updated.attendees && updated.attendees.length) {
           try {
@@ -1003,8 +1008,12 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
         const resolved = await graph.resolveAttendees(eventData.attendees, session);
         eventData.attendees = resolved;
         console.log('[calendar] resolved attendees:', resolved);
-        // Auto-detect IWS account
-        if (!calendarNameHint && eventData.account !== 'iws') {
+        // If all attendees are internal MYDIS, force MYDIS calendar
+        const allMydis = resolved.filter(e => !e.includes('email not found')).every(e => e.includes('@mydis.com') || e.includes('@iwsuk.com'));
+        const anyExternal = resolved.some(e => e.includes('@') && !e.includes('@mydis.com') && !e.includes('@iwsuk.com') && !e.includes('email not found'));
+
+        // Auto-detect IWS account — only if there are external contacts
+        if (!calendarNameHint && eventData.account !== 'iws' && anyExternal) {
           // Check session emails first
           const iwsSessionEmails = (session && session.emails || []).filter(e => e.account === 'iws');
           const foundInIwsSession = resolved.some(email =>
@@ -1062,18 +1071,27 @@ async function handleCalendarAdd(text, calendarNameHint, skipTaskCheck) {
         const eEnd = new Date(e.endTime);
         const cleanSubject = e.subject.replace(/^\[EXTERNAL:\]\s*/i, '').replace(/Invitation:\s*/i, '').split('@')[0].trim();
 
-        // Check overlap
-        if (eStart < eventEnd && eEnd > eventStart) {
+        // Check overlap — includes back-to-back meetings (gap of 0 mins = clash)
+        const overlapMins = (Math.min(eEnd, eventEnd) - Math.max(eStart, eventStart)) / 60000;
+        if (overlapMins > 0) {
+          // True overlap
           clashes.push(cleanSubject + ' (' +
             eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) +
             ' - ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ')');
         } else {
-          const gapBefore = (eventStart - eEnd) / 60000;
-          const gapAfter = (eStart - eventEnd) / 60000;
-          if (gapBefore >= 0 && gapBefore <= 30) {
+          const gapBefore = (eventStart - eEnd) / 60000; // mins between prev end and new start
+          const gapAfter = (eStart - eventEnd) / 60000;  // mins between new end and next start
+          if (gapBefore === 0) {
+            // Back-to-back — count as clash
+            clashes.push(cleanSubject + ' ends exactly when this starts (' +
+              eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ')');
+          } else if (gapBefore > 0 && gapBefore <= 30) {
             nearby.push('📅 ' + eEnd.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' ends — ' + cleanSubject);
           }
-          if (gapAfter >= 0 && gapAfter <= 30) {
+          if (gapAfter === 0) {
+            clashes.push(cleanSubject + ' starts exactly when this ends (' +
+              eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ')');
+          } else if (gapAfter > 0 && gapAfter <= 30) {
             nearby.push('📅 ' + eStart.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' starts — ' + cleanSubject);
           }
         }
